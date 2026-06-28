@@ -12,3 +12,6 @@
 
 # Editor/OS
 .DS_Store
+
+# Local manual testbed (never committed)
+/_testbed/
