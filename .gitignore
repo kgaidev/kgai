@@ -1,0 +1,14 @@
+# Downloaded at install time — never committed (large native lib + vendored binding).
+/third_party/
+
+# Build artifacts
+/src/kg
+*.so
+*.dylib
+*.dll
+
+# Local Go module cache noise
+/src/vendor/
+
+# Editor/OS
+.DS_Store

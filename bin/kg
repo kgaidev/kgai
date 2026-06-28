@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# bin/kg — thin shim on the Bash tool PATH. The real binary + native lib live in a
+# stable home ($KGAI_HOME, default ~/.kgai), independent of the ephemeral plugin
+# cache. If the engine isn't installed yet, it bootstraps once, then execs.
+set -euo pipefail
+
+KGAI_HOME="${KGAI_HOME:-$HOME/.kgai}"
+BIN="$KGAI_HOME/bin/kg"
+LIB="$KGAI_HOME/lib"
+
+if [ ! -x "$BIN" ]; then
+  # Locate this shim's plugin root to run the installer.
+  SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  ROOT="${CLAUDE_PLUGIN_ROOT:-$SELF}"
+  if [ -x "$ROOT/scripts/install.sh" ]; then
+    bash "$ROOT/scripts/install.sh" >&2 || true
+  fi
+fi
+
+if [ ! -x "$BIN" ]; then
+  echo '{"ok":false,"error":"kg engine not installed yet. Run the plugin installer: bash scripts/install.sh (needs go+gcc, or a prebuilt release)."}' >&2
+  exit 127
+fi
+
+export LD_LIBRARY_PATH="$LIB:${LD_LIBRARY_PATH:-}"
+exec "$BIN" "$@"

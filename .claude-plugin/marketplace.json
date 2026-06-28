@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "kgai-marketplace",
+  "metadata": {
+    "description": "Knowledge graph plugin for Claude Code: an immutable, synced store of engineering decisions for AI."
+  },
+  "owner": {
+    "name": "Vaclav Dovrtel",
+    "email": "vaclav.dovrtel@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "kgai",
+      "source": "./",
+      "description": "Immutable knowledge graph of engineering decisions for AI."
+    }
+  ]
+}

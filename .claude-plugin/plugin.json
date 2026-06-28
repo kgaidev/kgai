@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "kgai",
+  "displayName": "kgai — Knowledge Graph",
+  "version": "0.1.0",
+  "description": "Local-first, historically-immutable knowledge graph of engineering decisions and knowledge, projected into an embedded LadybugDB/Kuzu graph for AI retrieval. Records decisions with all their relationships, preserves the full evolution of every decision, and syncs to a remote with branch-based conflict resolution.",
+  "author": {
+    "name": "Vaclav Dovrtel",
+    "email": "vaclav.dovrtel@gmail.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "knowledge-graph",
+    "decisions",
+    "adr",
+    "ladybugdb",
+    "kuzu",
+    "immutable",
+    "event-sourcing",
+    "memory"
+  ]
+}
