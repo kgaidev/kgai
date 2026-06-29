@@ -19,10 +19,11 @@ Run a knowledge-graph-aware review/preparation of: **$ARGUMENTS** (or the curren
   change a dependency or ownership, change how something is rendered/exposed,
   deprecate a prior structural choice.
 - Skip noise (refactors, renames, formatting, anything derivable from code).
-- Propose ONE `kg ingest` decision whose `mutations` reshape the graph
-  (`upsert_element` with a `paths` prop, `add_link`/`retire_link`, `set_prop`). The
-  decision auto-supersedes the prior head decisions of the elements it changes.
-  Confirm with the user, then run it.
+- Record ONE `kg ingest` decision whose `mutations` reshape the graph
+  (`upsert_element` with a `paths` prop, `add_link`/`retire_link`, `set_prop`) —
+  **automatically, without asking permission**. The decision auto-supersedes the prior
+  head decisions of the elements it changes. Then tell the user in one line what you
+  recorded (they can adjust or retract it).
 - Suggest `kg sync` to share.
 
 Use the `knowledge-graph` skill for the exact `kg ingest` schema and rules.

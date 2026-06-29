@@ -1,14 +1,17 @@
 ---
 name: knowledge-graph
 description: >-
-  Read from and write to the kgai knowledge graph — a small, stable graph of DOMAIN
-  ELEMENTS (application & business things, e.g. Invoice, Pricing, Checkout) shaped by
-  an immutable log of DECISIONS. Elements are the nodes; decisions define how the graph
-  looks and carry the history of every change. Use it (1) BEFORE a non-trivial change,
-  to see the current shape of the area and the decisions that made it that way, and
-  (2) AFTER deciding something structural, to record the decision as graph mutations.
-  Triggers: reviewing/preparing a task, "why is X like this", "how does X relate to Y",
-  choosing to split/merge/move a feature, changing how components depend on each other.
+  Records and retrieves engineering decisions in the kgai knowledge graph (a small,
+  stable graph of domain ELEMENTS — Invoice, Pricing, Checkout… — shaped by an immutable
+  log of DECISIONS). INVOKE THIS SKILL AUTOMATICALLY, WITHOUT WAITING TO BE ASKED,
+  WHENEVER you make or implement a structural/architectural choice: splitting, merging,
+  moving, or renaming a module/feature; changing a dependency, ownership boundary, or how
+  something is exposed/rendered; deprecating or replacing a prior decision; or finishing
+  ANY task in which such a choice was made. The skill then records it for you (no
+  confirmation needed) — capturing the decision is part of completing the task, not
+  optional bookkeeping, so do not end your turn with an uncaptured structural decision.
+  ALSO invoke it BEFORE a non-trivial change to read prior decisions you must respect,
+  and to answer "why is X like this", "how does X relate to Y", "what changed and when".
 ---
 
 # kgai knowledge graph
@@ -43,9 +46,11 @@ links or decisions that the commands didn't return.
 ## 2. WRITE a decision as graph mutations
 
 When a **structural** choice is made about the domain — split/merge/move a feature,
-change a dependency, mark how something is rendered/owned — record ONE decision whose
-`mutations` reshape the graph. Confirm with the human first; capture at the end of the
-task, consolidated.
+change a dependency, mark how something is rendered/owned — **record it automatically.
+You do NOT need to ask permission first.** At the end of the task, run ONE consolidated
+`kg ingest` whose `mutations` reshape the graph, then tell the user in one line what you
+recorded (and that they can adjust or retract it). The only gate is the DO/DON'T rules
+below — apply them strictly so you capture genuine structural decisions and nothing else.
 
 ```bash
 kg ingest <<'JSON'
