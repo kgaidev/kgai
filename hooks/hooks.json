@@ -10,6 +10,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/auto-capture-stop.sh\"",
+            "timeout": 20
+          }
+        ]
+      }
     ]
   }
 }

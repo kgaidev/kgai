@@ -79,6 +79,21 @@ The AI follows the bundled **`knowledge-graph` skill**, which tells it to read b
 non-trivial changes and to capture only structural choices (no noise), at the end of a
 task, as one atomic `kg ingest`.
 
+### Automatic capture (no need to ask)
+
+Decisions are captured **automatically**, without you having to run a command, via two
+layers that back each other up:
+
+1. The skill's description compels the model to record a structural decision on its own.
+2. A **`Stop` hook** ([hooks/auto-capture-stop.sh](hooks/auto-capture-stop.sh)) fires at
+   the end of any turn that edited code and — if the model forgot to record a structural
+   decision — makes it do so before finishing. It is loop-safe (honors `stop_hook_active`)
+   and stays quiet on trivial work (renames, formatting, bug fixes record nothing).
+
+Measured on headless runs: structural refactors auto-record reliably across opus and
+sonnet; when the model was deliberately stopped from self-recording, the hook still
+captured the decision every time; trivial edits recorded nothing even when nudged.
+
 ### Record a decision (the primary write path)
 
 A decision reshapes the element graph via `mutations`:
