@@ -6,7 +6,8 @@
   },
   "owner": {
     "name": "Vaclav Dovrtel",
-    "email": "vaclav.dovrtel@gmail.com"
+    "email": "vaclav.dovrtel@gmail.com",
+    "url": "https://github.com/vasekd"
   },
   "plugins": [
     {

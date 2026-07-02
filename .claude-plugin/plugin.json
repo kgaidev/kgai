@@ -8,6 +8,8 @@
     "name": "Vaclav Dovrtel",
     "email": "vaclav.dovrtel@gmail.com"
   },
+  "repository": "https://github.com/vasekd/kgai",
+  "homepage": "https://github.com/vasekd/kgai",
   "license": "MIT",
   "keywords": [
     "knowledge-graph",
