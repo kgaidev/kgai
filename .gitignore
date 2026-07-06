@@ -18,3 +18,5 @@
 
 # Local dev review team (agents + /review) — not part of the shipped plugin
 /.claude/
+# kgai per-project knowledge graph store (own git/sync cycle)
+.kgai/
