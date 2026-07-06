@@ -1,8 +1,12 @@
 name: build-prebuilt
 
-# Builds the `kg` engine + bundles the native libkuzu for each platform and attaches
-# them to the GitHub Release. install.sh consumes these when KG_RELEASE_BASE points at
-# the release's download base, so end users need neither Go nor a C compiler.
+# Builds the `kg` engine and bundles the native libkuzu for each platform, then attaches
+# them to the GitHub Release. install.sh downloads these (KG_RELEASE_BASE defaults to this
+# repo's latest release), so end users need neither Go nor a C compiler.
+#
+# Native runners only (no CGO cross-compile): each job builds on its own architecture and
+# fetch-libs.sh pulls the matching prebuilt libkuzu. macOS is intentionally not built yet —
+# it needs @loader_path rpath + a DYLD-aware shim; see README "Roadmap".
 
 on:
   release:
@@ -18,15 +22,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            goos: linux
+          - runner: ubuntu-latest
+            arch: x86_64
             goarch: amd64
-            asset_arch: x86_64
-          - os: macos-latest
-            goos: darwin
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
             goarch: arm64
-            asset_arch: aarch64
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,15 +46,20 @@ jobs:
         run: |
           go build -ldflags="-extldflags '-Wl,-rpath,\$ORIGIN/../lib'" -o kg .
 
+      - name: Smoke test the binary
+        run: |
+          LD_LIBRARY_PATH="third_party/go-kuzu/lib/dynamic/linux-${{ matrix.goarch }}" \
+            src/kg version
+
       - name: Stage artifacts
         run: |
           mkdir -p dist
-          cp src/kg "dist/kg-${{ matrix.goos }}-${{ matrix.asset_arch }}"
-          libsub="${{ matrix.goos }}-${{ matrix.goarch }}"
-          cp third_party/go-kuzu/lib/dynamic/$libsub/libkuzu.* \
-             "dist/libkuzu-${{ matrix.goos }}-${{ matrix.asset_arch }}.so"
+          cp src/kg "dist/kg-linux-${{ matrix.arch }}"
+          cp "third_party/go-kuzu/lib/dynamic/linux-${{ matrix.goarch }}/libkuzu.so" \
+             "dist/libkuzu-linux-${{ matrix.arch }}.so"
+          ls -la dist
 
-      - name: Upload to release
+      - name: Attach to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
@@ -62,5 +69,5 @@ jobs:
         if: github.event_name != 'release'
         uses: actions/upload-artifact@v4
         with:
-          name: kg-${{ matrix.goos }}-${{ matrix.asset_arch }}
+          name: kg-linux-${{ matrix.arch }}
           path: dist/*

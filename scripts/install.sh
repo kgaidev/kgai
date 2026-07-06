@@ -16,6 +16,10 @@ KGAI_HOME="${KGAI_HOME:-$HOME/.kgai}"
 BIN="$KGAI_HOME/bin/kg"
 LIBDIR="$KGAI_HOME/lib"
 KUZU_VERSION="${KUZU_VERSION:-0.11.2}"
+# Prefer prebuilt binaries from the repo's latest GitHub release (no Go/gcc needed). If a
+# platform asset is missing (e.g. before the first release), the download fails and we fall
+# back to building from source. Override or set empty to force the source build.
+KG_RELEASE_BASE="${KG_RELEASE_BASE-https://github.com/vasekd/kgai/releases/latest/download}"
 mkdir -p "$KGAI_HOME/bin" "$LIBDIR"
 
 status() { echo "kgai: $*"; }
