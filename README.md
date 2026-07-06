@@ -56,10 +56,15 @@ reads and records decisions on its own. To record or query by hand:
 
 ## Initialize the graph for a project
 
-There is no required setup step: the store is **per-project** and is created automatically
-in `<project>/.kgai/store` the first time anything reads or writes it (it is also added to
-the project's `.gitignore`). Your name on recorded decisions is picked up automatically
-from `git config user.name`.
+The store is **per-project** and everything is picked up automatically — it is created in
+`<project>/.kgai/store` on first use (and added to the project's `.gitignore`), and your
+name on recorded decisions comes from `git config user.name`. To set it up explicitly up
+front:
+
+```bash
+cd your-project
+kg init
+```
 
 A brand-new graph is empty, so the first real value comes from **seeding it with what you
 already know**. Two ways that work well:
