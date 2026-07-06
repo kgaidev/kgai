@@ -13,6 +13,7 @@ import (
 
 	"kgai/internal/event"
 	"kgai/internal/graph"
+	"kgai/internal/remote"
 	"kgai/internal/store"
 )
 
@@ -290,6 +291,12 @@ func (e *Engine) Rebuild() (int, error) {
 		return 0, err
 	}
 	defer e.S.Unlock()
+	return e.rebuildLocked()
+}
+
+// rebuildLocked drops the projection and replays the whole log in canonical order.
+// The caller must hold the store write lock (flock is not reentrant).
+func (e *Engine) rebuildLocked() (int, error) {
 	if err := removeAll(e.S.GraphPath()); err != nil {
 		return 0, err
 	}
@@ -344,16 +351,25 @@ func (e *Engine) replay(g *graph.Graph) (int, error) {
 
 // ---- sync ------------------------------------------------------------------
 
-func (e *Engine) Sync() (store.SyncResult, int, []ConflictGroup, error) {
+func (e *Engine) Sync() (remote.SyncResult, int, []ConflictGroup, error) {
 	if err := e.S.Lock(); err != nil {
-		return store.SyncResult{}, 0, nil, err
+		return remote.SyncResult{}, 0, nil, err
 	}
 	defer e.S.Unlock()
-	sr, err := e.S.PullPush("kg sync")
+	r, err := remote.For(e.S.Config.Remote)
+	if err != nil {
+		return remote.SyncResult{Remote: e.S.Config.Remote}, 0, nil, err
+	}
+	sr, err := r.Sync(e.S)
 	if err != nil {
 		return sr, 0, nil, err
 	}
-	n, err := e.ApplyNew()
+	// Rebuild (not incremental apply) after a sync: pulled events may sort BEFORE
+	// events already projected here, and mutations like set_prop on the same key are
+	// last-writer-wins — only a full replay in canonical (lamport, hash) order makes
+	// every install converge to the identical projection. The graph is small by
+	// design, so this is cheap.
+	n, err := e.rebuildLocked()
 	if err != nil {
 		return sr, n, nil, err
 	}

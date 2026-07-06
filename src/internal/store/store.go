@@ -277,11 +277,84 @@ func readShard(path string) ([]event.Event, error) {
 
 // MyShard reads only this install's shard (for hash-chain checks and parents).
 func (s *Store) MyShard() ([]event.Event, error) {
-	evs, err := readShard(s.shardPath())
+	return s.ShardEvents(s.Config.InstallID)
+}
+
+// ShardEvents reads one install's shard (empty result if it doesn't exist yet).
+func (s *Store) ShardEvents(installID string) ([]event.Event, error) {
+	evs, err := readShard(filepath.Join(s.logDir(), installID+".ndjson"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	return evs, err
+}
+
+// ShardCounts returns the number of events currently held per install. Object-store
+// remotes derive push/pull plans from these counts (the protocol is stateless).
+func (s *Store) ShardCounts() (map[string]int, error) {
+	entries, err := os.ReadDir(s.logDir())
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ndjson") {
+			continue
+		}
+		install := strings.TrimSuffix(e.Name(), ".ndjson")
+		evs, err := s.ShardEvents(install)
+		if err != nil {
+			return nil, err
+		}
+		out[install] = len(evs)
+	}
+	return out, nil
+}
+
+// AppendForeign appends already-hashed events from another install to that install's
+// local shard, enforcing the shard's hash chain: the first new event must reference
+// the current local tail as its parent (or have no parent when the shard is empty).
+// The caller must hold the write lock and must never use this for its own install.
+func (s *Store) AppendForeign(installID string, evs []event.Event) error {
+	if installID == s.Config.InstallID {
+		return fmt.Errorf("refusing to append foreign events to own shard")
+	}
+	if len(evs) == 0 {
+		return nil
+	}
+	existing, err := s.ShardEvents(installID)
+	if err != nil {
+		return err
+	}
+	prev := ""
+	if len(existing) > 0 {
+		prev = existing[len(existing)-1].Hash
+	}
+	for _, ev := range evs {
+		got := ""
+		if len(ev.Parents) > 0 {
+			got = ev.Parents[0]
+		}
+		if got != prev {
+			return fmt.Errorf("hash-chain break for install %s: event %s expects parent %q, local tail is %q", installID, ev.Hash, got, prev)
+		}
+		prev = ev.Hash
+	}
+	f, err := os.OpenFile(filepath.Join(s.logDir(), installID+".ndjson"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	for _, ev := range evs {
+		line, err := json.Marshal(ev)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(append(line, '\n')); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // NextLamport returns one past the maximum lamport observed across all shards.
@@ -356,7 +429,9 @@ func guessActor() string {
 	return "unknown"
 }
 
-// ---- git -------------------------------------------------------------------
+// ---- local git scaffold ------------------------------------------------------
+// (Sync transports live in internal/remote; the store only keeps the local repo
+// scaffold so the log has free local history regardless of the configured remote.)
 
 func (s *Store) git(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
@@ -366,81 +441,4 @@ func (s *Store) git(args ...string) (string, error) {
 		return string(out), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
-}
-
-// Commit stages and commits the log if there is anything to commit.
-func (s *Store) Commit(msg string) error {
-	if _, err := s.git("add", "-A"); err != nil {
-		return err
-	}
-	// Nothing staged → no-op (git commit would fail).
-	if out, _ := s.git("status", "--porcelain"); strings.TrimSpace(out) == "" {
-		return nil
-	}
-	// Ensure identity for the commit even on bare machines.
-	_, _ = s.git("config", "user.name", nonEmpty(s.Config.Actor, "kgai"))
-	_, _ = s.git("config", "user.email", "kgai@local")
-	_, err := s.git("commit", "-q", "-m", msg)
-	return err
-}
-
-// SyncResult summarizes a sync run.
-type SyncResult struct {
-	Pulled   bool   `json:"pulled"`
-	Pushed   bool   `json:"pushed"`
-	Remote   string `json:"remote,omitempty"`
-	Detail   string `json:"detail,omitempty"`
-}
-
-// PullPush performs the remote half of a sync: commit, fetch + fast-forward/union
-// merge (NEVER rebase, NEVER force), then push. Returns whether new events arrived.
-func (s *Store) PullPush(msg string) (SyncResult, error) {
-	res := SyncResult{Remote: s.Config.Remote}
-	if err := s.Commit(msg); err != nil {
-		return res, err
-	}
-	if s.Config.Remote == "" {
-		res.Detail = "no remote configured; committed locally only"
-		return res, nil
-	}
-	// Make sure 'origin' points at the configured remote.
-	if _, err := s.git("remote", "get-url", "origin"); err != nil {
-		if _, err := s.git("remote", "add", "origin", s.Config.Remote); err != nil {
-			return res, err
-		}
-	} else {
-		_, _ = s.git("remote", "set-url", "origin", s.Config.Remote)
-	}
-	branch := "main"
-	if _, err := s.git("fetch", "-q", "origin"); err != nil {
-		res.Detail = "fetch failed (offline?): " + err.Error()
-		return res, nil // offline is not fatal — local log is intact
-	}
-	// Merge remote branch if it exists. --no-rebase keeps append-only history.
-	if _, err := s.git("rev-parse", "--verify", "-q", "origin/"+branch); err == nil {
-		before, _ := s.git("rev-parse", "HEAD")
-		// --allow-unrelated-histories: each install inits its own repo, so the first
-		// cross-install merge joins two roots. Per-install shards are distinct files,
-		// so this is still a conflict-free union, never a rebase or force.
-		if out, err := s.git("merge", "--no-edit", "--allow-unrelated-histories", "-m", "kg sync merge", "origin/"+branch); err != nil {
-			return res, fmt.Errorf("merge conflict (unexpected for per-install shards): %s", out)
-		}
-		after, _ := s.git("rev-parse", "HEAD")
-		res.Pulled = strings.TrimSpace(before) != strings.TrimSpace(after)
-	}
-	// Ensure branch name then push.
-	_, _ = s.git("branch", "-M", branch)
-	if out, err := s.git("push", "-q", "-u", "origin", branch); err != nil {
-		res.Detail = "push failed: " + strings.TrimSpace(out)
-		return res, nil
-	}
-	res.Pushed = true
-	return res, nil
-}
-
-func nonEmpty(a, b string) string {
-	if strings.TrimSpace(a) != "" {
-		return a
-	}
-	return b
 }

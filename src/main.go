@@ -380,7 +380,8 @@ READ
   conflicts [--about X]                               elements shaped by >1 head decision
 
 ADMIN
-  sync         (experimental) commit + pull (ff/union, never rebase) + replay + push
+  sync         (experimental) exchange the log with the configured remote
+               (git URL, or s3://bucket/prefix), then rebuild the projection
   rebuild      discard graph cache and replay the whole log
   export --canonical   deterministic dump for replay verification
   doctor       verify hash chains and report store health

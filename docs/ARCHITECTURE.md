@@ -72,10 +72,27 @@ hash, so identical content is idempotent and any change is a new immutable decis
 
 ## Sync and conflicts
 
-> **Status:** the sync mechanism below is implemented in the engine (`kg sync`) but team
+> **Status:** the sync mechanisms below are implemented in the engine (`kg sync`) but team
 > sharing is **not yet exposed as a supported feature** — no slash command ships for it
 > and the docs don't advertise it. It's on the roadmap; the design is recorded here so
 > the storage decisions (shards, union merge) make sense.
+
+Transports are pluggable (`internal/remote`, chosen by the remote URL scheme):
+
+- **git** (any git URL): the store dir is a git repo; sync = commit → fetch → union
+  merge → push.
+- **s3** (`s3://bucket/prefix`): a **stateless segment protocol** for object stores.
+  Each push uploads a write-once object `segments/<install>/<seq>-<count>.ndjson`
+  holding that install's next batch of events. What to push/pull is derived by
+  comparing local shard lengths with the cumulative counts encoded in the keys — no
+  client-side sync state to lose. Downloads are verified (content hash + shard
+  hash-chain continuity) before landing in the local log. The kgai cloud will speak
+  this same protocol via presigned URLs.
+- After every sync the projection is **fully rebuilt** in canonical (lamport, hash)
+  order rather than incrementally patched: pulled events may sort before already-
+  projected ones, and last-writer-wins mutations (e.g. `set_prop` on the same key)
+  would otherwise diverge between installs. Rebuild is cheap because the live graph
+  is small by design.
 
 - The log is split into **per-install NDJSON shards** (`log/<installId>.ndjson`,
   installId minted at `kg init`). One writer per file ⇒ git merges are a **conflict-free
