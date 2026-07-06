@@ -15,3 +15,6 @@
 
 # Local manual testbed (never committed)
 /_testbed/
+
+# Local dev review team (agents + /review) — not part of the shipped plugin
+/.claude/
