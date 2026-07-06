@@ -58,13 +58,8 @@ reads and records decisions on its own. To record or query by hand:
 
 There is no required setup step: the store is **per-project** and is created automatically
 in `<project>/.kgai/store` the first time anything reads or writes it (it is also added to
-the project's `.gitignore`). Run `kg init` yourself only when you want to set the options
-up front:
-
-```bash
-cd your-project
-kg init --actor "Your Name"
-```
+the project's `.gitignore`). Your name on recorded decisions is picked up automatically
+from `git config user.name`.
 
 A brand-new graph is empty, so the first real value comes from **seeding it with what you
 already know**. Two ways that work well:
