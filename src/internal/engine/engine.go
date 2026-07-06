@@ -9,11 +9,24 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"kgai/internal/event"
 	"kgai/internal/graph"
 	"kgai/internal/store"
 )
+
+// parseImportDate accepts YYYY-MM-DD or RFC3339 and returns a normalized RFC3339 UTC
+// timestamp, for back-dating imported decisions.
+func parseImportDate(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC().Format(time.RFC3339), nil
+		}
+	}
+	return "", fmt.Errorf("invalid date %q (use YYYY-MM-DD or RFC3339)", s)
+}
 
 type Engine struct {
 	S *store.Store
@@ -90,6 +103,16 @@ func (e *Engine) Ingest(in IngestInput, dryRun bool) (IngestResult, error) {
 			res.Warnings = append(res.Warnings, "decision already recorded (no-op): "+dr.Title)
 			res.Decisions = append(res.Decisions, dr)
 			continue
+		}
+		// Back-dating: an explicit date sets the event's recorded_at (else Append stamps
+		// now). Lamport is still assigned in ingest order, so listing decisions oldest-
+		// first gives a history whose causal order matches the real dates.
+		if di.Date != "" {
+			ts, derr := parseImportDate(di.Date)
+			if derr != nil {
+				return res, fmt.Errorf("decision %q: %w", di.Title, derr)
+			}
+			ev.RecordedAt = ts
 		}
 		lam, err := e.S.NextLamport()
 		if err != nil {

@@ -70,9 +70,15 @@ func dispatch(cmd string, args []string) error {
 }
 
 func open() (*engine.Engine, error) {
-	s, err := store.Open(os.Getenv("KGAI_STORE"))
+	root := os.Getenv("KGAI_STORE")
+	s, err := store.Open(root)
 	if err != nil {
-		return nil, err
+		// Not initialized yet → lazily create the per-project store on first use, so
+		// any command (read or write) just works in a fresh project.
+		s, err = store.Init(root, "", "")
+		if err != nil {
+			return nil, err
+		}
 	}
 	return engine.New(s), nil
 }

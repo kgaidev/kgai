@@ -32,9 +32,12 @@ srcver() {
 }
 
 ensure_store() {
-  if [ ! -f "$KGAI_HOME/store/kg.config.json" ]; then
-    KGAI_HOME="$KGAI_HOME" LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" "$BIN" init >/dev/null 2>&1 || true
-  fi
+  # The store is per-project (<project>/.kgai/store). Create it once per project.
+  local proj cfg
+  proj="$(git -C "${CLAUDE_PROJECT_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null || echo "${CLAUDE_PROJECT_DIR:-$PWD}")"
+  cfg="$proj/.kgai/store/kg.config.json"
+  [ -f "$cfg" ] && return 0
+  ( cd "$proj" && KGAI_HOME="$KGAI_HOME" LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" "$BIN" init ) >/dev/null 2>&1 || true
 }
 
 report_ready() {

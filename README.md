@@ -67,6 +67,16 @@ kg init --remote git@github.com:your-org/kg-store.git
 Concurrent edits never clobber each other — if two people change the same thing, it becomes
 a visible **branch** to resolve, not a silent overwrite.
 
+### Importing past decisions
+
+Seeding the graph with decisions that were really made earlier? Give each one a `date`
+(`YYYY-MM-DD` or RFC3339) so the history and `kg as-of <date>` reflect the real timeline,
+not the import time:
+
+```json
+{ "decision": { "title": "…", "date": "2025-03-15", "mutations": [ … ] } }
+```
+
 ## What you can do
 
 | You want to… | Command / slash |
@@ -109,10 +119,16 @@ Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 | Env | Meaning | Default |
 |---|---|---|
-| `KGAI_HOME` | engine + store home | `~/.kgai` |
-| `KGAI_STORE` | override store location | `$KGAI_HOME/store` |
+| `KGAI_STORE` | knowledge-graph store location | `<project>/.kgai/store` (per-project) |
+| `KGAI_PROJECT` | project root used to locate the store | git top-level of the working dir |
+| `KGAI_HOME` | engine binary + native lib home | `~/.kgai` |
 | `KGAI_ACTOR` | your name on recorded decisions | git user / `$USER` |
 | `KG_RELEASE_BASE` | prebuilt download base | this repo's latest release |
+
+By default the KG is **per-project**: each project gets its own graph in
+`<project>/.kgai/store` (auto-created on first use and added to the project's
+`.gitignore`). The engine binary itself is shared in `~/.kgai`. Point `KGAI_STORE` at a
+shared path if you want several projects to write into one graph.
 
 ## Roadmap
 

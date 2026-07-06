@@ -45,14 +45,32 @@ type Store struct {
 
 const SchemaVersion = 1
 
-// DefaultRoot resolves the store root. KGAI_STORE overrides; otherwise the store
-// lives under the stable kgai home ($KGAI_HOME, default ~/.kgai), which is
-// independent of plugin env vars (those are not reliably present in the Bash tool).
+// ProjectRoot resolves the current project: the git top-level of the working directory,
+// or the working directory itself when it isn't a git repo. KGAI_PROJECT overrides.
+func ProjectRoot() string {
+	if v := os.Getenv("KGAI_PROJECT"); v != "" {
+		return v
+	}
+	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+		if p := strings.TrimSpace(string(out)); p != "" {
+			return p
+		}
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return wd
+	}
+	return "."
+}
+
+// DefaultRoot resolves the store root. By default the KG is PER-PROJECT: it lives in
+// <project>/.kgai/store, so each project has its own decision graph (with its own git/
+// sync cycle, independent of the project's own repo). KGAI_STORE overrides. The engine
+// binary + native lib still live in the shared ~/.kgai home (see KgaiHome).
 func DefaultRoot() string {
 	if v := os.Getenv("KGAI_STORE"); v != "" {
 		return v
 	}
-	return filepath.Join(KgaiHome(), "store")
+	return filepath.Join(ProjectRoot(), ".kgai", "store")
 }
 
 // KgaiHome is the stable runtime/store home for kgai.
@@ -109,7 +127,36 @@ func Init(root, actor, remote string) (*Store, error) {
 	if err := s.ensureGitScaffold(); err != nil {
 		return nil, err
 	}
+	// If this is the default per-project layout, keep the store out of the project's own
+	// git — it has its own repo and push cycle.
+	if proj := ProjectRoot(); s.Root == filepath.Join(proj, ".kgai", "store") {
+		addProjectIgnore(proj)
+	}
 	return s, nil
+}
+
+// addProjectIgnore makes the project's own git ignore the per-project KG store dir.
+func addProjectIgnore(proj string) {
+	if _, err := os.Stat(filepath.Join(proj, ".git")); err != nil {
+		return // not a git project → nothing to ignore
+	}
+	gi := filepath.Join(proj, ".gitignore")
+	data, _ := os.ReadFile(gi)
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == ".kgai/" {
+			return // already ignored
+		}
+	}
+	f, err := os.OpenFile(gi, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	prefix := ""
+	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
+		prefix = "\n"
+	}
+	_, _ = f.WriteString(prefix + "# kgai per-project knowledge graph store (own git/sync cycle)\n.kgai/\n")
 }
 
 // Open loads an existing store. Returns an error if not initialized.

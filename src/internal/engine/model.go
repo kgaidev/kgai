@@ -14,6 +14,7 @@ type DecisionInput struct {
 	Title        string          `json:"title"`
 	Rationale    string          `json:"rationale,omitempty"`
 	Author       string          `json:"author,omitempty"`
+	Date         string          `json:"date,omitempty"` // back-date a decision (YYYY-MM-DD or RFC3339); for importing real history
 	Refs         []RefInput      `json:"refs,omitempty"`
 	SupersedesOn []string        `json:"supersedes_on,omitempty"` // extra element refs this decision is the new authority on
 	Mutations    []MutationInput `json:"mutations"`
