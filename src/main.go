@@ -85,15 +85,28 @@ func open() (*engine.Engine, error) {
 
 func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	root := fs.String("root", "", "store root (default: $KGAI_STORE or $KGAI_HOME/store or ~/.kgai/store)")
+	root := fs.String("root", "", "store root (default: $KGAI_STORE or <project>/.kgai/store)")
 	actor := fs.String("actor", "", "actor/author name for this install")
-	remote := fs.String("remote", "", "git remote URL for sync (experimental — team sharing is not a supported feature yet)")
+	remote := fs.String("remote", "", "sync remote: git URL, s3://bucket/prefix, or kgai://org/project (experimental)")
+	token := fs.String("token", "", "kgai cloud token (stored install-locally, 0600)")
+	cloudURL := fs.String("cloud-url", "", "kgai cloud broker base URL (overridable by KGAI_CLOUD_URL)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	s, err := store.Init(*root, *actor, *remote)
 	if err != nil {
 		return err
+	}
+	if *token != "" || *cloudURL != "" {
+		if *token != "" {
+			s.Config.CloudToken = *token
+		}
+		if *cloudURL != "" {
+			s.Config.CloudURL = *cloudURL
+		}
+		if err := s.SaveConfig(); err != nil {
+			return err
+		}
 	}
 	if _, err := engine.New(s).Rebuild(); err != nil {
 		return err

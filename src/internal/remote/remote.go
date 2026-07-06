@@ -41,15 +41,8 @@ func For(url string) (Remote, error) {
 	case strings.HasPrefix(url, "s3://"):
 		return newS3Remote(url)
 	case strings.HasPrefix(url, "kgai://"):
-		return nil, ErrCloudNotAvailable
+		return newCloudRemote(url)
 	default:
 		return &gitRemote{}, nil
 	}
 }
-
-// ErrCloudNotAvailable is returned for kgai:// remotes until the cloud service ships.
-var ErrCloudNotAvailable = errString("the kgai cloud remote is not available yet — use s3:// or a git URL for now")
-
-type errString string
-
-func (e errString) Error() string { return string(e) }

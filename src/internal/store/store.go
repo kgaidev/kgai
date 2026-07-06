@@ -28,12 +28,15 @@ import (
 	"kgai/internal/event"
 )
 
-// Config is persisted as kg.config.json.
+// Config is persisted as kg.config.json (install-local, gitignored — the cloud token
+// therefore never leaves this machine via sync).
 type Config struct {
-	InstallID    string `json:"install_id"`
-	Actor        string `json:"actor"`
-	Remote       string `json:"remote,omitempty"`
-	SchemaVer    int    `json:"schema_version"`
+	InstallID  string `json:"install_id"`
+	Actor      string `json:"actor"`
+	Remote     string `json:"remote,omitempty"`
+	CloudURL   string `json:"cloud_url,omitempty"`
+	CloudToken string `json:"cloud_token,omitempty"`
+	SchemaVer  int    `json:"schema_version"`
 }
 
 // Store is a handle to an initialized KG store on disk.
@@ -177,8 +180,12 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) saveConfig() error {
 	b, _ := json.MarshalIndent(s.Config, "", "  ")
-	return os.WriteFile(s.configPath(), append(b, '\n'), 0o644)
+	// 0600: the config may hold the cloud token.
+	return os.WriteFile(s.configPath(), append(b, '\n'), 0o600)
 }
+
+// SaveConfig persists config changes made after Init (e.g. cloud credentials).
+func (s *Store) SaveConfig() error { return s.saveConfig() }
 
 func (s *Store) ensureGitScaffold() error {
 	// .gitignore: derived graph cache, native libs, lock, and the install-local
