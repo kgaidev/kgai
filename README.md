@@ -10,7 +10,7 @@ what you'd break by going back. That reasoning lives in people's heads and in ol
 threads — and it walks out the door when they do.
 
 **kgai** captures it as you work. While you and Claude change code, it records the
-structural decisions into a small, shared knowledge graph. Before touching an area, your
+structural decisions into a small, searchable knowledge graph. Before touching an area, your
 AI checks what was already decided; after making a change, it captures the new decision —
 **automatically, without you asking**. Nothing is ever overwritten, so you can always ask
 *how did this get this way?* and get the full story.
@@ -58,17 +58,16 @@ reads and records decisions on its own. To record or query by hand:
 
 There is no required setup step: the store is **per-project** and is created automatically
 in `<project>/.kgai/store` the first time anything reads or writes it (it is also added to
-the project's `.gitignore` — the graph has its own sync cycle). Run `kg init` yourself only
-when you want to set the options up front:
+the project's `.gitignore`). Run `kg init` yourself only when you want to set the options
+up front:
 
 ```bash
 cd your-project
-kg init --actor "Your Name"                              # local only
-kg init --actor "Your Name" --remote git@github.com:org/kg-store.git   # + team sync
+kg init --actor "Your Name"
 ```
 
-A brand-new graph is empty, so the first real value comes from **seeding it with what your
-team already knows**. Two ways that work well:
+A brand-new graph is empty, so the first real value comes from **seeding it with what you
+already know**. Two ways that work well:
 
 1. **Let Claude interview the codebase (and you).** In a Claude Code session, ask something
    like: *"Walk through this codebase, identify the main domain elements (features,
@@ -83,20 +82,7 @@ team already knows**. Two ways that work well:
 Then check what the graph knows: `kg context` (whole picture), `/kgai:kg-ask "<area>"`.
 From that point on, day-to-day capture is automatic.
 
-## Share it with your team
-
-The knowledge graph is a store with its own sync cycle, independent of any project repo.
-Point it at a git remote once, and decisions flow to the whole team:
-
-```bash
-kg init --remote git@github.com:your-org/kg-store.git
-/kgai:kg-sync                 # commit, pull teammates' decisions, push yours
-```
-
-Concurrent edits never clobber each other — if two people change the same thing, it becomes
-a visible **branch** to resolve, not a silent overwrite.
-
-### Importing past decisions
+## Importing past decisions
 
 Seeding the graph with decisions that were really made earlier? Give each one a `date`
 (`YYYY-MM-DD` or RFC3339) so the history and `kg as-of <date>` reflect the real timeline,
@@ -115,8 +101,7 @@ not the import time:
 | Review a task, graph-aware (read → review → capture) | `/kgai:kg-review` |
 | See how something evolved | `/kgai:kg-history` · `kg history "feature:Invoice"` |
 | See the whole picture at a past date | `kg as-of 2026-01-01` |
-| Resolve concurrent-edit branches | `/kgai:kg-conflicts` |
-| Share / pull decisions | `/kgai:kg-sync` |
+| Resolve conflicting decision branches | `/kgai:kg-conflicts` |
 | Raw query (power users) | `/kgai:kg-query` · `kg query "…"` |
 
 ### Automatic capture — and no noise
@@ -138,9 +123,9 @@ chain of decisions is the history; the live graph is always the current shape.
 
 It's event-sourced: an append-only, content-addressed **decision log** is the source of
 truth, projected into an embedded **[LadybugDB](https://ladybugdb.com)/Kuzu** property graph
-(queryable with Cypher) that can be rebuilt from the log at any time. Sync is a conflict-free
-merge of per-person log shards. Identity is a deterministic hash of an element's kind+name,
-so two people recording the same thing converge on one node with no coordination.
+(queryable with Cypher) that can be rebuilt from the log at any time. Identity is a
+deterministic hash of an element's kind+name, so recording the same thing twice converges
+on one node with no coordination.
 
 Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
@@ -161,6 +146,9 @@ shared path if you want several projects to write into one graph.
 
 ## Roadmap
 
+- **Team sharing** — sync the graph across developers via a shared remote, with
+  conflict-free merging of everyone's decisions. (The engine groundwork exists; it will
+  be exposed as a supported feature once polished.)
 - Prebuilt binaries for Linux (x86_64, aarch64) via GitHub Releases — see
   [`.github/workflows/build.yml`](.github/workflows/build.yml).
 - macOS prebuilds (needs `@loader_path` linking + a DYLD-aware launcher).

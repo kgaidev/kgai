@@ -24,6 +24,5 @@ Run a knowledge-graph-aware review/preparation of: **$ARGUMENTS** (or the curren
   **automatically, without asking permission**. The decision auto-supersedes the prior
   head decisions of the elements it changes. Then tell the user in one line what you
   recorded (they can adjust or retract it).
-- Suggest `kg sync` to share.
 
 Use the `knowledge-graph` skill for the exact `kg ingest` schema and rules.

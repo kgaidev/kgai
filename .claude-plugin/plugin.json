@@ -3,7 +3,7 @@
   "name": "kgai",
   "displayName": "kgai — Knowledge Graph",
   "version": "0.1.0",
-  "description": "Give your codebase a memory. kgai automatically captures the engineering decisions behind your code — what changed, why, and how it evolved — into a shared, searchable knowledge graph your AI reads before changing code and writes to after. The reasoning that used to live only in developers' heads, remembered forever.",
+  "description": "Give your codebase a memory. kgai automatically captures the engineering decisions behind your code — what changed, why, and how it evolved — into a searchable knowledge graph your AI reads before changing code and writes to after. The reasoning that used to live only in developers' heads, remembered forever.",
   "author": {
     "name": "Vaclav Dovrtel",
     "email": "vaclav.dovrtel@gmail.com"

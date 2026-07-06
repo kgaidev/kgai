@@ -101,14 +101,9 @@ How it behaves:
 
 ## 3. Conflicts = two head decisions on one element
 
-If two people changed the same element concurrently, it has two head decisions —
-a branch. `kg conflicts` lists them. Resolve by recording one decision that changes
-that element again (it supersedes both heads), with a rationale for the resolution.
-
-## 4. Sync
-
-`kg sync` commits, pulls + union-merges teammates' decisions (per-install log shards,
-never a rebase), replays, pushes, and reports any new conflicts.
+If the same element was changed concurrently (e.g. from two sessions), it has two head
+decisions — a branch. `kg conflicts` lists them. Resolve by recording one decision that
+changes that element again (it supersedes both heads), with a rationale for the resolution.
 
 ## Schema (for `kg query`)
 Nodes: `Element(id, kind, name, props)`, `Decision(id, title, rationale, author,

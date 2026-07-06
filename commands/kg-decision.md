@@ -31,6 +31,5 @@ Follow the `knowledge-graph` skill. Steps:
 
 5. Report the decision id and the elements it shaped. The decision automatically
    supersedes the prior head decision(s) of those elements (history chains itself).
-   Suggest `kg sync` to share.
 
 Only record genuinely structural choices (see the skill's DO/DON'T).

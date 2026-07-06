@@ -4,8 +4,8 @@
 
 Capture engineering **decisions and knowledge** that otherwise live only in developers'
 heads, **immutably and historically** (the evolution of each decision is preserved),
-**local-first with remote sync and conflict resolution**, and primarily **for an AI** to
-read from and write to.
+**local-first**, and primarily **for an AI** to read from and write to. (Team sync to a
+shared remote is designed in — see below — but not yet exposed as a supported feature.)
 
 ## Two planes, one log
 
@@ -71,6 +71,11 @@ time, so two people who record `feature:Invoice` mint the **same** id and the gr
 hash, so identical content is idempotent and any change is a new immutable decision.
 
 ## Sync and conflicts
+
+> **Status:** the sync mechanism below is implemented in the engine (`kg sync`) but team
+> sharing is **not yet exposed as a supported feature** — no slash command ships for it
+> and the docs don't advertise it. It's on the roadmap; the design is recorded here so
+> the storage decisions (shards, union merge) make sense.
 
 - The log is split into **per-install NDJSON shards** (`log/<installId>.ndjson`,
   installId minted at `kg init`). One writer per file ⇒ git merges are a **conflict-free

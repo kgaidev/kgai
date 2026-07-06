@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "kgai-marketplace",
   "metadata": {
-    "description": "Give your codebase a memory — kgai captures the engineering decisions behind your code, automatically, for your AI and your team."
+    "description": "Give your codebase a memory — kgai captures the engineering decisions behind your code, automatically, for your AI."
   },
   "owner": {
     "name": "Vaclav Dovrtel",

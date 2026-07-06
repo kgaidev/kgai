@@ -87,7 +87,7 @@ func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	root := fs.String("root", "", "store root (default: $KGAI_STORE or $KGAI_HOME/store or ~/.kgai/store)")
 	actor := fs.String("actor", "", "actor/author name for this install")
-	remote := fs.String("remote", "", "git remote URL for sync")
+	remote := fs.String("remote", "", "git remote URL for sync (experimental — team sharing is not a supported feature yet)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -367,7 +367,7 @@ func usage() {
 USAGE: kg <command> [flags]
 
 WRITE
-  init [--remote URL] [--actor NAME] [--root DIR]   initialize the store
+  init [--actor NAME] [--root DIR]                   initialize the store
   ingest [--file F] [--dry-run]                      record decision(s) + graph mutations from stdin JSON
 
 READ
@@ -380,7 +380,7 @@ READ
   conflicts [--about X]                               elements shaped by >1 head decision
 
 ADMIN
-  sync         commit + pull (ff/union, never rebase) + replay + push
+  sync         (experimental) commit + pull (ff/union, never rebase) + replay + push
   rebuild      discard graph cache and replay the whole log
   export --canonical   deterministic dump for replay verification
   doctor       verify hash chains and report store health

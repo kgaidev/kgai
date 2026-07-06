@@ -20,4 +20,4 @@ Find and help resolve conflicting decisions. Optional filter: **$ARGUMENTS**
    JSON
    ```
 
-5. Confirm `kg conflicts` is clear and suggest `kg sync`.
+5. Confirm `kg conflicts` is clear.
