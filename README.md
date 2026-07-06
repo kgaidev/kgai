@@ -54,6 +54,35 @@ reads and records decisions on its own. To record or query by hand:
 /kgai:kg-history              # how something evolved
 ```
 
+## Initialize the graph for a project
+
+There is no required setup step: the store is **per-project** and is created automatically
+in `<project>/.kgai/store` the first time anything reads or writes it (it is also added to
+the project's `.gitignore` — the graph has its own sync cycle). Run `kg init` yourself only
+when you want to set the options up front:
+
+```bash
+cd your-project
+kg init --actor "Your Name"                              # local only
+kg init --actor "Your Name" --remote git@github.com:org/kg-store.git   # + team sync
+```
+
+A brand-new graph is empty, so the first real value comes from **seeding it with what your
+team already knows**. Two ways that work well:
+
+1. **Let Claude interview the codebase (and you).** In a Claude Code session, ask something
+   like: *"Walk through this codebase, identify the main domain elements (features,
+   services, business objects) and how they relate, ask me about anything that looks like a
+   deliberate decision, and record the results into the knowledge graph."* Claude maps the
+   elements, asks you for the *why* behind non-obvious boundaries, and records everything
+   via `kg ingest`.
+2. **Import known past decisions by hand** — old ADRs, wiki pages, tribal knowledge. Write
+   them as one `kg ingest` batch and give each decision its real `date` so the timeline is
+   honest (see [Importing past decisions](#importing-past-decisions)).
+
+Then check what the graph knows: `kg context` (whole picture), `/kgai:kg-ask "<area>"`.
+From that point on, day-to-day capture is automatic.
+
 ## Share it with your team
 
 The knowledge graph is a store with its own sync cycle, independent of any project repo.
