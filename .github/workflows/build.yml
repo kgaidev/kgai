@@ -9,8 +9,8 @@ name: build-prebuilt
 # it needs @loader_path rpath + a DYLD-aware shim; see README "Roadmap".
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -60,14 +60,18 @@ jobs:
              "dist/libkuzu-linux-${{ matrix.arch }}.so"
           ls -la dist
 
-      - name: Attach to release
-        if: github.event_name == 'release'
+      # On a tag push, create/attach the release with the built binaries.
+      - name: Create release + attach binaries
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           files: dist/*
+          generate_release_notes: true
+          make_latest: true
 
+      # Manual (workflow_dispatch) runs just publish artifacts for inspection.
       - name: Upload as workflow artifact
-        if: github.event_name != 'release'
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
           name: kg-linux-${{ matrix.arch }}
