@@ -27,6 +27,10 @@ type Graph struct {
 	db       *kuzu.Database
 	conn     *kuzu.Connection
 	readonly bool
+	// stmts caches prepared statements per query string — replay/ingest run the same
+	// handful of MERGE statements tens of thousands of times.
+	stmts map[string]*kuzu.PreparedStatement
+	inTxn bool
 }
 
 // Open opens (or creates) the graph at path. readonly opens it for queries only.
@@ -42,17 +46,44 @@ func Open(path string, readonly bool) (*Graph, error) {
 		db.Close()
 		return nil, fmt.Errorf("open connection: %w", err)
 	}
-	return &Graph{db: db, conn: conn, readonly: readonly}, nil
+	return &Graph{db: db, conn: conn, readonly: readonly, stmts: map[string]*kuzu.PreparedStatement{}}, nil
 }
 
-// Close releases the connection and database.
+// Close releases the connection and database (an open transaction is rolled back).
 func (g *Graph) Close() {
+	if g.inTxn {
+		_ = g.exec(`ROLLBACK`, nil)
+	}
+	for _, s := range g.stmts {
+		s.Close()
+	}
 	if g.conn != nil {
 		g.conn.Close()
 	}
 	if g.db != nil {
 		g.db.Close()
 	}
+}
+
+// Begin/Commit group many projection writes into one transaction. Without this every
+// statement auto-commits (own WAL flush), which makes bulk replay ~50× slower.
+func (g *Graph) Begin() error {
+	if g.inTxn {
+		return nil
+	}
+	if err := g.exec(`BEGIN TRANSACTION`, nil); err != nil {
+		return err
+	}
+	g.inTxn = true
+	return nil
+}
+
+func (g *Graph) Commit() error {
+	if !g.inTxn {
+		return nil
+	}
+	g.inTxn = false
+	return g.exec(`COMMIT`, nil)
 }
 
 // Raw runs an arbitrary read query and returns rows as column→value maps.
@@ -86,11 +117,15 @@ func (g *Graph) run(q string, params map[string]any) (*kuzu.QueryResult, error) 
 	if len(params) == 0 {
 		return g.conn.Query(q)
 	}
-	stmt, err := g.conn.Prepare(q)
-	if err != nil {
-		return nil, fmt.Errorf("prepare: %w (%s)", err, q)
+	stmt, ok := g.stmts[q]
+	if !ok {
+		var err error
+		stmt, err = g.conn.Prepare(q)
+		if err != nil {
+			return nil, fmt.Errorf("prepare: %w (%s)", err, q)
+		}
+		g.stmts[q] = stmt
 	}
-	defer stmt.Close()
 	return g.conn.Execute(stmt, params)
 }
 

@@ -44,6 +44,11 @@ type Store struct {
 	Root   string
 	Config Config
 	lock   *os.File
+
+	// tailHash caches the hash of the last event in THIS install's shard so batch
+	// appends don't re-read the whole shard per event. Valid only while the write
+	// lock is held (single writer); nil = not yet loaded.
+	tailHash *string
 }
 
 const SchemaVersion = 1
@@ -384,14 +389,21 @@ func (s *Store) NextLamport() (int64, error) {
 // Append finalizes (parents + hash) and appends an event to this install's shard.
 // The caller must hold the write lock.
 func (s *Store) Append(ev *event.Event) error {
-	mine, err := s.MyShard()
-	if err != nil {
-		return err
+	if s.tailHash == nil {
+		mine, err := s.MyShard()
+		if err != nil {
+			return err
+		}
+		tail := ""
+		if len(mine) > 0 {
+			tail = mine[len(mine)-1].Hash
+		}
+		s.tailHash = &tail
 	}
 	ev.InstallID = s.Config.InstallID
 	ev.Actor = s.Config.Actor
-	if len(mine) > 0 {
-		ev.Parents = []string{mine[len(mine)-1].Hash}
+	if *s.tailHash != "" {
+		ev.Parents = []string{*s.tailHash}
 	}
 	if ev.RecordedAt == "" {
 		ev.RecordedAt = time.Now().UTC().Format(time.RFC3339)
@@ -409,6 +421,7 @@ func (s *Store) Append(ev *event.Event) error {
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		return err
 	}
+	s.tailHash = &ev.Hash
 	return nil
 }
 

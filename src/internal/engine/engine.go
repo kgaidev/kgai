@@ -89,7 +89,29 @@ func (e *Engine) Ingest(in IngestInput, dryRun bool) (IngestResult, error) {
 	defer g.Close()
 
 	res := IngestResult{DryRun: dryRun, Elements: map[string]string{}}
-	for _, di := range inputs {
+	// One log scan per batch: NextLamport reads every shard, so at tens of thousands
+	// of decisions calling it per decision would be quadratic.
+	nextLam := int64(0)
+	if !dryRun {
+		var err error
+		if nextLam, err = e.S.NextLamport(); err != nil {
+			return res, err
+		}
+		// Group projection writes transactionally (chunked); an error path rolls back
+		// via g.Close() and the log/graph re-converge on the next replay.
+		if err := g.Begin(); err != nil {
+			return res, err
+		}
+	}
+	for bi, di := range inputs {
+		if !dryRun && bi > 0 && bi%500 == 0 {
+			if err := g.Commit(); err != nil {
+				return res, err
+			}
+			if err := g.Begin(); err != nil {
+				return res, err
+			}
+		}
 		dr, ev, err := e.buildDecisionEvent(g, di, &res)
 		if err != nil {
 			return res, err
@@ -115,11 +137,8 @@ func (e *Engine) Ingest(in IngestInput, dryRun bool) (IngestResult, error) {
 			}
 			ev.RecordedAt = ts
 		}
-		lam, err := e.S.NextLamport()
-		if err != nil {
-			return res, err
-		}
-		ev.Lamport = lam
+		ev.Lamport = nextLam
+		nextLam++
 		if err := e.S.Append(&ev); err != nil {
 			return res, err
 		}
@@ -129,6 +148,11 @@ func (e *Engine) Ingest(in IngestInput, dryRun bool) (IngestResult, error) {
 		dr.EventHash = ev.Hash
 		dr.Lamport = ev.Lamport
 		res.Decisions = append(res.Decisions, dr)
+	}
+	if !dryRun {
+		if err := g.Commit(); err != nil {
+			return res, err
+		}
 	}
 	return res, nil
 }
@@ -326,7 +350,21 @@ func (e *Engine) replay(g *graph.Graph) (int, error) {
 	}
 	store.SortEvents(all)
 	n := 0
-	for _, ev := range all {
+	// Batch the projection writes: one transaction per ~1000 events instead of one
+	// per statement (auto-commit) — the difference between minutes and seconds.
+	if err := g.Begin(); err != nil {
+		return 0, err
+	}
+	defer g.Commit()
+	for i, ev := range all {
+		if i > 0 && i%1000 == 0 {
+			if err := g.Commit(); err != nil {
+				return n, err
+			}
+			if err := g.Begin(); err != nil {
+				return n, err
+			}
+		}
 		applied, err := g.Applied(ev.Hash)
 		if err != nil {
 			return n, err
@@ -362,21 +400,95 @@ func (e *Engine) Sync() (remote.SyncResult, int, []ConflictGroup, error) {
 	if err != nil {
 		return remote.SyncResult{Remote: e.S.Config.Remote}, 0, nil, err
 	}
+	before, err := e.S.ShardCounts()
+	if err != nil {
+		return remote.SyncResult{}, 0, nil, err
+	}
 	sr, err := r.Sync(e.S)
 	if err != nil {
 		return sr, 0, nil, err
 	}
-	// Rebuild (not incremental apply) after a sync: pulled events may sort BEFORE
-	// events already projected here, and mutations like set_prop on the same key are
-	// last-writer-wins — only a full replay in canonical (lamport, hash) order makes
-	// every install converge to the identical projection. The graph is small by
-	// design, so this is cheap.
-	n, err := e.rebuildLocked()
+	n, err := e.applyPulled(before)
 	if err != nil {
 		return sr, n, nil, err
 	}
 	conf, err := e.conflictsLocked()
 	return sr, n, conf, err
+}
+
+// applyPulled projects events that arrived in a sync. Convergence requires canonical
+// (lamport, hash) order, and mutations like set_prop on the same key are last-writer-
+// wins — so when a pulled event sorts BEFORE anything already projected, only a full
+// replay converges. But that is the rare case: normally pulls append events newer than
+// everything local, which can be applied incrementally, and a push-only sync touches
+// the graph not at all. At tens of thousands of decisions this is the difference
+// between milliseconds and minutes per sync.
+func (e *Engine) applyPulled(before map[string]int) (int, error) {
+	after, err := e.S.ShardCounts()
+	if err != nil {
+		return 0, err
+	}
+	var pulled []event.Event
+	for inst, cnt := range after {
+		if prev := before[inst]; cnt > prev {
+			evs, err := e.S.ShardEvents(inst)
+			if err != nil {
+				return 0, err
+			}
+			pulled = append(pulled, evs[prev:]...)
+		}
+	}
+	if len(pulled) == 0 {
+		return 0, nil
+	}
+	minNew := pulled[0].Lamport
+	for _, ev := range pulled {
+		if ev.Lamport < minNew {
+			minNew = ev.Lamport
+		}
+	}
+	g, err := e.openWrite()
+	if err != nil {
+		return 0, err
+	}
+	maxApplied := int64(-1)
+	if rows, err := g.Raw(`MATCH (d:Decision) RETURN max(d.lamport) AS m`); err == nil && len(rows) > 0 {
+		if v, ok := rows[0]["m"].(int64); ok {
+			maxApplied = v
+		}
+	}
+	if minNew > maxApplied {
+		defer g.Close()
+		store.SortEvents(pulled)
+		if err := g.Begin(); err != nil {
+			return 0, err
+		}
+		n := 0
+		for i, ev := range pulled {
+			if i > 0 && i%1000 == 0 {
+				if err := g.Commit(); err != nil {
+					return n, err
+				}
+				if err := g.Begin(); err != nil {
+					return n, err
+				}
+			}
+			if !ev.Verify() {
+				continue
+			}
+			if ev.Decision != nil && event.DecisionID(*ev.Decision) != ev.Decision.ID {
+				continue
+			}
+			if err := g.ApplyEvent(ev); err != nil {
+				return n, fmt.Errorf("apply %s: %w", ev.Hash, err)
+			}
+			n++
+		}
+		return n, g.Commit()
+	}
+	// True interleaving (concurrent history arrived late) → full canonical replay.
+	g.Close()
+	return e.rebuildLocked()
 }
 
 // ---- helpers ---------------------------------------------------------------
