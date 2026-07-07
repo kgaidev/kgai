@@ -7,7 +7,9 @@ package engine
 
 import (
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -331,7 +333,18 @@ func (e *Engine) rebuildLocked() (int, error) {
 		return 0, err
 	}
 	defer g.Close()
-	return e.replay(g)
+	return e.replay(g, true)
+}
+
+// bulkThreshold is the log size from which a FRESH rebuild uses the COPY bulk loader
+// instead of per-event MERGE statements. Overridable for tests via KGAI_BULK_THRESHOLD.
+func bulkThreshold() int {
+	if v := os.Getenv("KGAI_BULK_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 1000
 }
 
 func (e *Engine) ApplyNew() (int, error) {
@@ -340,15 +353,30 @@ func (e *Engine) ApplyNew() (int, error) {
 		return 0, err
 	}
 	defer g.Close()
-	return e.replay(g)
+	return e.replay(g, false)
 }
 
-func (e *Engine) replay(g *graph.Graph) (int, error) {
+// replay projects the whole log. fresh=true means the database was just created
+// (rebuild), which enables the COPY bulk loader for large logs.
+func (e *Engine) replay(g *graph.Graph, fresh bool) (int, error) {
 	all, err := e.S.ReadAll()
 	if err != nil {
 		return 0, err
 	}
 	store.SortEvents(all)
+	if fresh && len(all) >= bulkThreshold() {
+		verified := all[:0]
+		for _, ev := range all {
+			if !ev.Verify() {
+				continue
+			}
+			if ev.Decision != nil && event.DecisionID(*ev.Decision) != ev.Decision.ID {
+				continue
+			}
+			verified = append(verified, ev)
+		}
+		return g.BulkLoad(verified)
+	}
 	n := 0
 	// Batch the projection writes: one transaction per ~1000 events instead of one
 	// per statement (auto-commit) — the difference between minutes and seconds.
@@ -456,6 +484,12 @@ func (e *Engine) applyPulled(before map[string]int) (int, error) {
 		if v, ok := rows[0]["m"].(int64); ok {
 			maxApplied = v
 		}
+	}
+	// Fresh store pulling a whole project (cold clone) → the rebuild path, which uses
+	// the COPY bulk loader for large logs.
+	if maxApplied < 0 && len(pulled) >= bulkThreshold() {
+		g.Close()
+		return e.rebuildLocked()
 	}
 	if minNew > maxApplied {
 		defer g.Close()

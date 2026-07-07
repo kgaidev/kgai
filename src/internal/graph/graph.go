@@ -291,7 +291,10 @@ func (g *Graph) ensureElement(id, kind, name string) error {
 		return nil
 	}
 	if kind == "" && name == "" {
-		return g.exec(`MERGE (e:Element {id:$id})`, map[string]any{"id": id})
+		// Empty-string defaults (not NULLs) keep the statement path byte-identical
+		// with the bulk COPY path in canonical exports.
+		return g.exec(`MERGE (e:Element {id:$id}) ON CREATE SET e.kind='', e.name='', e.props=''`,
+			map[string]any{"id": id})
 	}
 	return g.exec(
 		`MERGE (e:Element {id:$id}) ON CREATE SET e.kind=$kind, e.name=$name, e.props=''`,
