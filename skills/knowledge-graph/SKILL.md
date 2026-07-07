@@ -27,7 +27,7 @@ is the **history**; the live graph is always just the current shape.
 ## 1. READ before you change code
 
 ```bash
-kg search "invoice"                   # substring lookup to find the exact element/decision name first
+kg search "how is invoice rendering structured"   # free-text, relevance-ranked — pass a phrase or task description; tolerant to word forms and typos
 kg context --about "Invoice"          # the element + its current links + decisions that shaped it
 kg context --paths "src/billing/*"    # elements whose `paths` property matches what you're editing
 kg history "feature:Invoice"          # full decision chain that shaped one element (the why, over time)

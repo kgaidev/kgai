@@ -240,10 +240,9 @@ func (e *Engine) Context(q ContextQuery) (ContextResult, error) {
 			}
 		}
 		if q.About != "" {
-			needle := strings.ToLower(q.About)
-			if strings.Contains(strings.ToLower(it.Name), needle) || strings.Contains(strings.ToLower(it.Kind), needle) {
-				score += 6
-			}
+			// Free-text relevance (see search.go) — "billing invoices" matches the
+			// Invoice element without containing the literal word.
+			score += 6 * aboutScore(q.About, it.Kind, it.Name, asStr(r["props"]))
 		}
 		score += 0.001 * float64(maxLam[eid]) // recency tiebreak
 		if filtered && score < 1 {
@@ -344,13 +343,17 @@ func (e *Engine) AsOf(ts string) (AsOfResult, error) {
 // ---- search ----------------------------------------------------------------
 
 type SearchHit struct {
-	Kind  string `json:"kind"` // "element" | "decision"
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Extra string `json:"extra,omitempty"`
+	Kind     string   `json:"kind"` // "element" | "decision"
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Extra    string   `json:"extra,omitempty"`
+	Elements []string `json:"elements,omitempty"` // for decisions: elements they shaped
+	Score    float64  `json:"score,omitempty"`
 }
 
-// Search does a substring match over element names and decision titles/rationales.
+// Search ranks elements and decisions against FREE TEXT — a phrase, a task
+// description, a question — not exact words. See search.go for the scoring model
+// (tokenization incl. camelCase, stopwords, IDF weighting, fuzzy token matching).
 func (e *Engine) Search(text string, limit int) ([]SearchHit, error) {
 	if limit <= 0 {
 		limit = 20
@@ -360,24 +363,28 @@ func (e *Engine) Search(text string, limit int) ([]SearchHit, error) {
 		return nil, err
 	}
 	defer g.Close()
-	needle := strings.ToLower(strings.TrimSpace(text))
-	var hits []SearchHit
-	er, _ := g.Raw(`MATCH (e:Element) RETURN e.id AS id, e.kind AS kind, e.name AS name`)
+
+	var docs []searchDoc
+	er, _ := g.Raw(`MATCH (e:Element) RETURN e.id AS id, e.kind AS kind, e.name AS name, e.props AS props`)
 	for _, r := range er {
-		if needle == "" || strings.Contains(strings.ToLower(asStr(r["name"])), needle) {
-			hits = append(hits, SearchHit{Kind: "element", ID: asStr(r["id"]), Name: asStr(r["name"]), Extra: asStr(r["kind"])})
-		}
+		docs = append(docs, elementDoc(asStr(r["id"]), asStr(r["kind"]), asStr(r["name"]), asStr(r["props"]), asStr(r["kind"])))
 	}
-	dr, _ := g.Raw(`MATCH (d:Decision) RETURN d.id AS id, d.title AS title, d.rationale AS rationale`)
+	dr, _ := g.Raw(`MATCH (d:Decision)-[s:SHAPES]->(el:Element) WHERE s.authority = true
+		WITH d, collect(el.name) AS els
+		RETURN d.id AS id, d.title AS title, d.rationale AS rationale, d.summary AS summary, els`)
 	for _, r := range dr {
-		hay := strings.ToLower(asStr(r["title"]) + " " + asStr(r["rationale"]))
-		if needle == "" || strings.Contains(hay, needle) {
-			hits = append(hits, SearchHit{Kind: "decision", ID: asStr(r["id"]), Name: asStr(r["title"]), Extra: oneLine(asStr(r["rationale"]))})
-		}
-		if len(hits) >= limit {
-			break
-		}
+		els := asStrSlice(r["els"])
+		docs = append(docs, searchDoc{
+			hit: SearchHit{Kind: "decision", ID: asStr(r["id"]), Name: asStr(r["title"]),
+				Extra: oneLine(asStr(r["rationale"])), Elements: els},
+			fields: []searchField{
+				{3.0, tokenize(asStr(r["title"]))},
+				{1.5, tokenize(strings.Join(els, " "))},
+				{1.0, tokenize(asStr(r["rationale"]) + " " + asStr(r["summary"]))},
+			},
+		})
 	}
+	hits := scoreDocs(text, docs)
 	if len(hits) > limit {
 		hits = hits[:limit]
 	}
