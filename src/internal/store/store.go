@@ -203,11 +203,13 @@ func (s *Store) ensureGitScaffold() error {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(s.Root, ".git")); errors.Is(err, os.ErrNotExist) {
-		if _, err := s.git("init", "-q"); err != nil {
-			return fmt.Errorf("git init: %w", err)
+		// Local git history is a nicety (and required only by the git sync transport).
+		// Environments without a git binary — e.g. a Lambda serving queries over an
+		// s3:// remote — must still be able to run a store, so failure is non-fatal.
+		if _, err := s.git("init", "-q"); err == nil {
+			// union merge needs to be enabled in the repo's git config too.
+			_, _ = s.git("config", "merge.union.driver", "git merge-file --union %A %O %B")
 		}
-		// union merge needs to be enabled in the repo's git config too.
-		_, _ = s.git("config", "merge.union.driver", "git merge-file --union %A %O %B")
 	}
 	return nil
 }
