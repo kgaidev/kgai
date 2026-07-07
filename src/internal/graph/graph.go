@@ -113,7 +113,7 @@ func (g *Graph) EnsureSchema() error {
 			install_id STRING, event_hash STRING, PRIMARY KEY(id))`,
 		`CREATE NODE TABLE _Applied(hash STRING, PRIMARY KEY(hash))`,
 		`CREATE REL TABLE LINK(FROM Element TO Element, kind STRING, created_by STRING)`,
-		`CREATE REL TABLE SHAPES(FROM Decision TO Element)`,
+		`CREATE REL TABLE SHAPES(FROM Decision TO Element, authority BOOLEAN)`,
 		`CREATE REL TABLE SUPERSEDES(FROM Decision TO Decision)`,
 	}
 	for _, q := range ddl {
@@ -123,6 +123,13 @@ func (g *Graph) EnsureSchema() error {
 			}
 			return err
 		}
+	}
+	// Heal caches built before SHAPES carried `authority` (default true = the old
+	// semantics, where every shaping decision counted as a head candidate).
+	if err := g.exec(`ALTER TABLE SHAPES ADD authority BOOLEAN DEFAULT true`, nil); err != nil &&
+		!strings.Contains(err.Error(), "already exists") && !strings.Contains(err.Error(), "duplicated") {
+		// Older engines that can't ALTER simply keep working after a `kg rebuild`.
+		_ = err
 	}
 	return nil
 }
@@ -164,12 +171,20 @@ func (g *Graph) ApplyEvent(ev event.Event) error {
 		}
 	}
 
-	// 3) Provenance: this decision SHAPES every element it touched.
+	// 3) Provenance: this decision SHAPES every element it touched; `authority` marks
+	// the subset it structurally changed (only those drive heads/conflicts). Events
+	// from engines predating Targets get authority=true everywhere (old semantics).
+	targets := map[string]bool{}
+	for _, t := range d.Targets {
+		targets[t] = true
+	}
 	for _, eid := range d.Shapes {
 		g.ensureElement(eid, "", "")
+		auth := targets[eid] || len(d.Targets) == 0
 		if err := g.exec(
-			`MATCH (n:Decision {id:$d}), (e:Element {id:$e}) MERGE (n)-[:SHAPES]->(e)`,
-			map[string]any{"d": d.ID, "e": eid}); err != nil {
+			`MATCH (n:Decision {id:$d}), (e:Element {id:$e}) MERGE (n)-[r:SHAPES]->(e)
+			 ON CREATE SET r.authority=$a`,
+			map[string]any{"d": d.ID, "e": eid, "a": auth}); err != nil {
 			return err
 		}
 	}

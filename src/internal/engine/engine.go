@@ -214,6 +214,7 @@ func (e *Engine) buildDecisionEvent(g *graph.Graph, di DecisionInput, res *Inges
 	}
 	d.Supersedes = sortedKeys(supSet)
 	d.Shapes = sortedKeys(shapes)
+	d.Targets = sortedKeys(targets)
 	d.ID = event.DecisionID(d)
 
 	dr := DecisionResult{ID: d.ID, Title: d.Title, Shapes: d.Shapes, Supersedes: d.Supersedes}
@@ -268,11 +269,12 @@ func (e *Engine) resolveElementRef(token string, res *IngestResult) (id, kind, n
 }
 
 // headDecisions returns the decision(s) currently authoritative over an element: those
-// that SHAPES it with no other shaping decision superseding them. More than one ⇒ a
-// conflict branch.
+// that changed it (authority SHAPES) with no later authority decision superseding them.
+// Provenance-only touches never create heads. More than one head ⇒ a conflict branch.
 func (e *Engine) headDecisions(g *graph.Graph, elementID string) []string {
-	rows, err := g.Raw(`MATCH (d:Decision)-[:SHAPES]->(e:Element {id:'` + esc(elementID) + `'})
-		WHERE NOT EXISTS { MATCH (d2:Decision)-[:SUPERSEDES]->(d), (d2)-[:SHAPES]->(e) }
+	rows, err := g.Raw(`MATCH (d:Decision)-[s:SHAPES]->(e:Element {id:'` + esc(elementID) + `'})
+		WHERE s.authority = true
+		  AND NOT EXISTS { MATCH (d2:Decision)-[:SUPERSEDES]->(d), (d2)-[s2:SHAPES]->(e) WHERE s2.authority = true }
 		RETURN d.id AS id, d.lamport AS lamport ORDER BY lamport DESC`)
 	if err != nil {
 		return nil

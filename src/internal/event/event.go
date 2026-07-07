@@ -52,6 +52,7 @@ type Decision struct {
 	Summary    string     `json:"summary,omitempty"`
 	Supersedes []string   `json:"supersedes,omitempty"` // decision ids this one replaces
 	Shapes     []string   `json:"shapes,omitempty"`     // element ids touched (provenance)
+	Targets    []string   `json:"targets,omitempty"`    // subset of Shapes this decision is the new AUTHORITY on (drives heads/conflicts)
 	Mutations  []Mutation `json:"mutations"`
 }
 

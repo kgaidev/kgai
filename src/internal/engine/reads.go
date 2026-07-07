@@ -50,8 +50,9 @@ func (e *Engine) conflictsLocked() ([]ConflictGroup, error) {
 }
 
 func (e *Engine) conflictsOn(g *graph.Graph, about string) ([]ConflictGroup, error) {
-	rows, err := g.Raw(`MATCH (d:Decision)-[:SHAPES]->(e:Element)
-		WHERE NOT EXISTS { MATCH (d2:Decision)-[:SUPERSEDES]->(d), (d2)-[:SHAPES]->(e) }
+	rows, err := g.Raw(`MATCH (d:Decision)-[s:SHAPES]->(e:Element)
+		WHERE s.authority = true
+		  AND NOT EXISTS { MATCH (d2:Decision)-[:SUPERSEDES]->(d), (d2)-[s2:SHAPES]->(e) WHERE s2.authority = true }
 		WITH e, collect(d.id) AS heads, collect(d.title) AS titles
 		WHERE size(heads) > 1
 		RETURN e.id AS eid, e.name AS name, e.kind AS kind, heads, titles`)
