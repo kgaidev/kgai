@@ -40,7 +40,7 @@ The boundary was intentional, and the reasoning is right there. No archaeology, 
 
 ```bash
 # install from GitHub (public marketplace lives in this repo)
-claude plugin marketplace add vasekd/kgai
+claude plugin marketplace add kgaidev/kgai
 claude plugin install kgai@kgai-marketplace
 ```
 

@@ -5,9 +5,9 @@
     "description": "Give your codebase a memory — kgai captures the engineering decisions behind your code, automatically, for your AI."
   },
   "owner": {
-    "name": "Vaclav Dovrtel",
-    "email": "vaclav.dovrtel@gmail.com",
-    "url": "https://github.com/vasekd"
+    "name": "kgai maintainers",
+    "email": "team@kgai.dev",
+    "url": "https://github.com/kgaidev"
   },
   "plugins": [
     {

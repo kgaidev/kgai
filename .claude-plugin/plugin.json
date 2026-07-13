@@ -5,11 +5,11 @@
   "version": "0.1.5",
   "description": "Give your codebase a memory. kgai automatically captures the engineering decisions behind your code — what changed, why, and how it evolved — into a searchable knowledge graph your AI reads before changing code and writes to after. The reasoning that used to live only in developers' heads, remembered forever.",
   "author": {
-    "name": "Vaclav Dovrtel",
-    "email": "vaclav.dovrtel@gmail.com"
+    "name": "kgai maintainers",
+    "email": "team@kgai.dev"
   },
-  "repository": "https://github.com/vasekd/kgai",
-  "homepage": "https://github.com/vasekd/kgai",
+  "repository": "https://github.com/kgaidev/kgai",
+  "homepage": "https://github.com/kgaidev/kgai",
   "license": "MIT",
   "keywords": [
     "knowledge-graph",
