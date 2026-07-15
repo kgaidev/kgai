@@ -37,6 +37,14 @@ type Config struct {
 	CloudURL   string `json:"cloud_url,omitempty"`
 	CloudToken string `json:"cloud_token,omitempty"`
 	SchemaVer  int    `json:"schema_version"`
+
+	// Machine binds the installId to the machine it was minted on (see machine.go).
+	// A store opened on a different machine is a COPY and rotates its identity.
+	Machine string `json:"machine,omitempty"`
+	// RetiredInstalls lists installIds this store previously wrote as. Their shards
+	// are read-only history; sync reconciles them against the remote and re-records
+	// any events the remote never received under the current identity.
+	RetiredInstalls []string `json:"retired_installs,omitempty"`
 }
 
 // Store is a handle to an initialized KG store on disk.
@@ -129,6 +137,7 @@ func Init(root, actor, remote string) (*Store, error) {
 	if s.Config.SchemaVer == 0 {
 		s.Config.SchemaVer = SchemaVersion
 	}
+	s.applyMachineBinding()
 	if err := s.saveConfig(); err != nil {
 		return nil, err
 	}
@@ -231,6 +240,22 @@ func (s *Store) Lock() error {
 		return err
 	}
 	s.lock = f
+	// Re-read the config under the lock (a concurrent process may have rotated the
+	// identity between Open and Lock) and verify the machine binding before this
+	// process writes anything as the possibly-stale installId.
+	if b, err := os.ReadFile(s.configPath()); err == nil {
+		var c Config
+		if json.Unmarshal(b, &c) == nil && c.InstallID != "" {
+			s.Config = c
+			s.tailHash = nil
+		}
+	}
+	if _, changed := s.applyMachineBinding(); changed {
+		if err := s.saveConfig(); err != nil {
+			s.Unlock()
+			return err
+		}
+	}
 	return nil
 }
 
@@ -369,6 +394,66 @@ func (s *Store) AppendForeign(installID string, evs []event.Event) error {
 		}
 	}
 	return nil
+}
+
+// RewriteShard atomically replaces one RETIRED/foreign shard file with the given
+// events. Only sync's fork reconciliation uses this: when a retired shard diverged
+// from the remote, the remote's version is the canon for that installId (its orphaned
+// local events are re-recorded under the current identity via ReEmit).
+func (s *Store) RewriteShard(installID string, evs []event.Event) error {
+	if installID == s.Config.InstallID {
+		return fmt.Errorf("refusing to rewrite own shard")
+	}
+	p := filepath.Join(s.logDir(), installID+".ndjson")
+	tmp := p + ".tmp"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	for _, ev := range evs {
+		line, err := json.Marshal(ev)
+		if err != nil {
+			f.Close()
+			os.Remove(tmp)
+			return err
+		}
+		if _, err := f.Write(append(line, '\n')); err != nil {
+			f.Close()
+			os.Remove(tmp)
+			return err
+		}
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, p)
+}
+
+// ReEmit re-records the decisions carried by orphaned events (a retired shard's tail
+// the remote never received) under THIS install's identity, with fresh lamports and
+// a fresh hash chain. Decision ids are content-addressed, so a graph that already
+// applied the originals converges to the same state. The caller holds the write lock.
+func (s *Store) ReEmit(evs []event.Event) (int, error) {
+	if len(evs) == 0 {
+		return 0, nil
+	}
+	lam, err := s.NextLamport()
+	if err != nil {
+		return 0, err
+	}
+	for i, old := range evs {
+		ev := event.Event{
+			Op:         old.Op,
+			Lamport:    lam + int64(i),
+			RecordedAt: old.RecordedAt, // preserve the real decision time
+			Decision:   old.Decision,
+		}
+		if err := s.Append(&ev); err != nil {
+			return i, err
+		}
+	}
+	return len(evs), nil
 }
 
 // NextLamport returns one past the maximum lamport observed across all shards.

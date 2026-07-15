@@ -51,6 +51,8 @@ func dispatch(cmd string, args []string) error {
 		return cmdConflicts(args)
 	case "sync":
 		return cmdSync(args)
+	case "rotate":
+		return cmdRotate(args)
 	case "rebuild":
 		return cmdRebuild(args)
 	case "export":
@@ -297,6 +299,24 @@ func cmdSync(args []string) error {
 	return nil
 }
 
+func cmdRotate(args []string) error {
+	e, err := open()
+	if err != nil {
+		return err
+	}
+	if err := e.S.Lock(); err != nil {
+		return err
+	}
+	defer e.S.Unlock()
+	old, cur, err := e.S.RotateInstall()
+	if err != nil {
+		return err
+	}
+	emit(map[string]any{"ok": true, "rotated": true, "old_install": old, "install": cur,
+		"note": "run `kg sync` — local-only decisions from the old identity are re-recorded automatically"})
+	return nil
+}
+
 func cmdRebuild(args []string) error {
 	e, err := open()
 	if err != nil {
@@ -395,6 +415,8 @@ READ
 ADMIN
   sync         (experimental) exchange the log with the configured remote
                (git URL, or s3://bucket/prefix), then rebuild the projection
+  rotate       give this store a fresh install identity (fix for a copied store
+               after sync reports a shard fork)
   rebuild      discard graph cache and replay the whole log
   export --canonical   deterministic dump for replay verification
   doctor       verify hash chains and report store health

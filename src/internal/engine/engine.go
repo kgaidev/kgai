@@ -436,7 +436,14 @@ func (e *Engine) Sync() (remote.SyncResult, int, []ConflictGroup, error) {
 	if err != nil {
 		return sr, 0, nil, err
 	}
-	n, err := e.applyPulled(before)
+	var n int
+	if sr.RebuildNeeded {
+		// sync rewrote history in place (retired-shard reconciliation) — only a
+		// full replay converges.
+		n, err = e.rebuildLocked()
+	} else {
+		n, err = e.applyPulled(before)
+	}
 	if err != nil {
 		return sr, n, nil, err
 	}

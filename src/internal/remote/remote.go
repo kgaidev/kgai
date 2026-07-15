@@ -22,6 +22,10 @@ type SyncResult struct {
 	Pushed bool   `json:"pushed"`
 	Remote string `json:"remote,omitempty"`
 	Detail string `json:"detail,omitempty"`
+	// RebuildNeeded is set when sync rewrote local history in place (retired-shard
+	// reconciliation after an identity rotation) — incremental apply cannot express
+	// that, so the caller must fully rebuild the projection.
+	RebuildNeeded bool `json:"rebuild_needed,omitempty"`
 }
 
 // Remote is one sync transport. Sync exchanges log events with the remote: it uploads
