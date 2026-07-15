@@ -492,9 +492,15 @@ func (e *Engine) applyPulled(before map[string]int) (int, error) {
 			maxApplied = v
 		}
 	}
-	// Fresh store pulling a whole project (cold clone) → the rebuild path, which uses
-	// the COPY bulk loader for large logs.
-	if maxApplied < 0 && len(pulled) >= bulkThreshold() {
+	// Large pulls take the rebuild path: the COPY bulk loader replays the WHOLE log
+	// faster than per-event MERGE applies a big tail (measured ~60µs/event vs
+	// ~30ms/event), so incremental only wins for small tails. Breakeven is roughly
+	// pulled ≈ total/500; the floor keeps tiny stores incremental.
+	total := 0
+	for _, c := range after {
+		total += c
+	}
+	if len(pulled) >= 50 && len(pulled)*500 >= total {
 		g.Close()
 		return e.rebuildLocked()
 	}

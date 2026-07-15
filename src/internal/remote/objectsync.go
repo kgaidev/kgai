@@ -117,6 +117,10 @@ func (r *objectRemote) Sync(s *store.Store) (SyncResult, error) {
 		if install == mine {
 			continue
 		}
+		// Accumulate all of this install's new events and append ONCE: AppendForeign
+		// re-reads the whole local shard to verify the hash chain, so appending per
+		// segment is quadratic in shard size (painful on a cold clone of a big log).
+		var batch []event.Event
 		for _, f := range PlanPull(counts[install], isegs) {
 			data, err := r.os.Get(f.Segment.Key)
 			if err != nil {
@@ -131,14 +135,18 @@ func (r *objectRemote) Sync(s *store.Store) (SyncResult, error) {
 			if f.SkipEvents >= len(evs) {
 				continue
 			}
-			if err := s.AppendForeign(install, evs[f.SkipEvents:]); err != nil {
-				// A hash-chain break here means THAT install forked (its writer must
-				// `kg rotate`); our own log is unaffected.
-				problems = append(problems, fmt.Sprintf("%s: %v", f.Segment.Key, err))
-				break
-			}
-			res.Pulled = true
+			batch = append(batch, evs[f.SkipEvents:]...)
 		}
+		if len(batch) == 0 {
+			continue
+		}
+		if err := s.AppendForeign(install, batch); err != nil {
+			// A hash-chain break here means THAT install forked (its writer must
+			// `kg rotate`); our own log is unaffected.
+			problems = append(problems, fmt.Sprintf("append %s: %v", install, err))
+			continue
+		}
+		res.Pulled = true
 	}
 
 	if len(problems) > 0 {

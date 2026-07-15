@@ -13,9 +13,11 @@ package store
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -330,6 +332,8 @@ func (s *Store) ShardEvents(installID string) ([]event.Event, error) {
 
 // ShardCounts returns the number of events currently held per install. Object-store
 // remotes derive push/pull plans from these counts (the protocol is stateless).
+// Events are one per line, so counting newlines avoids parsing megabytes of JSON on
+// every sync/ingest — this runs twice per sync and must stay cheap at big logs.
 func (s *Store) ShardCounts() (map[string]int, error) {
 	entries, err := os.ReadDir(s.logDir())
 	if err != nil {
@@ -340,14 +344,35 @@ func (s *Store) ShardCounts() (map[string]int, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ndjson") {
 			continue
 		}
-		install := strings.TrimSuffix(e.Name(), ".ndjson")
-		evs, err := s.ShardEvents(install)
+		n, err := countLines(filepath.Join(s.logDir(), e.Name()))
 		if err != nil {
 			return nil, err
 		}
-		out[install] = len(evs)
+		out[strings.TrimSuffix(e.Name(), ".ndjson")] = n
 	}
 	return out, nil
+}
+
+// countLines counts complete ('\n'-terminated) lines — every append writes exactly
+// one terminated line per event, so this equals the event count.
+func countLines(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	buf := make([]byte, 256*1024)
+	n := 0
+	for {
+		r, err := f.Read(buf)
+		n += bytes.Count(buf[:r], []byte{'\n'})
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return n, nil
+			}
+			return n, err
+		}
+	}
 }
 
 // AppendForeign appends already-hashed events from another install to that install's
@@ -457,18 +482,75 @@ func (s *Store) ReEmit(evs []event.Event) (int, error) {
 }
 
 // NextLamport returns one past the maximum lamport observed across all shards.
+// Lamport is monotone WITHIN a shard (every writer stamps max-seen+1, appends are in
+// order, and pulled segments preserve the foreign writer's order), so the shard's
+// last line carries its maximum — reading one line per shard replaces parsing the
+// whole log on every ingest batch.
 func (s *Store) NextLamport() (int64, error) {
-	all, err := s.ReadAll()
+	entries, err := os.ReadDir(s.logDir())
 	if err != nil {
 		return 0, err
 	}
 	var maxLam int64
-	for _, e := range all {
-		if e.Lamport > maxLam {
-			maxLam = e.Lamport
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ndjson") {
+			continue
+		}
+		line, err := lastLine(filepath.Join(s.logDir(), e.Name()))
+		if err != nil {
+			return 0, err
+		}
+		if len(line) == 0 {
+			continue
+		}
+		var tail struct {
+			Lamport int64 `json:"lamport"`
+		}
+		if err := json.Unmarshal(line, &tail); err != nil {
+			return 0, fmt.Errorf("corrupt shard tail in %s: %w", e.Name(), err)
+		}
+		if tail.Lamport > maxLam {
+			maxLam = tail.Lamport
 		}
 	}
 	return maxLam + 1, nil
+}
+
+// lastLine returns the final complete line of a file without reading the whole file.
+func lastLine(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.Size() == 0 {
+		return nil, err
+	}
+	// Read backwards in growing chunks until a newline separates the last line.
+	const chunk = 64 * 1024
+	var acc []byte
+	off := st.Size()
+	for off > 0 {
+		n := int64(chunk)
+		if n > off {
+			n = off
+		}
+		off -= n
+		buf := make([]byte, n)
+		if _, err := f.ReadAt(buf, off); err != nil {
+			return nil, err
+		}
+		acc = append(buf, acc...)
+		trimmed := bytes.TrimRight(acc, "\n")
+		if i := bytes.LastIndexByte(trimmed, '\n'); i >= 0 {
+			return trimmed[i+1:], nil
+		}
+	}
+	return bytes.TrimRight(acc, "\n"), nil
 }
 
 // Append finalizes (parents + hash) and appends an event to this install's shard.
