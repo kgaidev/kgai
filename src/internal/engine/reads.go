@@ -316,6 +316,10 @@ func (e *Engine) AsOf(ts string) (AsOfResult, error) {
 	if err := g.EnsureSchema(); err != nil {
 		return AsOfResult{}, err
 	}
+	// Filter first, then project. Big cuts go through the COPY bulk loader — the
+	// per-event MERGE path costs ~30ms/event, which at 100k decisions is close to an
+	// hour; the bulk loader replays the same slice in seconds.
+	kept := all[:0]
 	for _, ev := range all {
 		rt, perr := time.Parse(time.RFC3339, ev.RecordedAt)
 		if perr != nil || rt.After(cut.UTC()) {
@@ -324,7 +328,24 @@ func (e *Engine) AsOf(ts string) (AsOfResult, error) {
 		if !ev.Verify() {
 			continue
 		}
-		if err := g.ApplyEvent(ev); err != nil {
+		kept = append(kept, ev)
+	}
+	if len(kept) >= bulkThreshold() {
+		if _, err := g.BulkLoad(kept); err != nil {
+			return AsOfResult{}, err
+		}
+	} else {
+		// Small cuts: per-event applies, batched in one transaction instead of
+		// per-statement auto-commits.
+		if err := g.Begin(); err != nil {
+			return AsOfResult{}, err
+		}
+		for _, ev := range kept {
+			if err := g.ApplyEvent(ev); err != nil {
+				return AsOfResult{}, err
+			}
+		}
+		if err := g.Commit(); err != nil {
 			return AsOfResult{}, err
 		}
 	}
