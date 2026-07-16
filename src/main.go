@@ -23,7 +23,15 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
-	if err := dispatch(os.Args[1], os.Args[2:]); err != nil {
+	args := make([]string, 0, len(os.Args)-2)
+	for _, a := range os.Args[2:] {
+		if a == "--json" {
+			forceJSON = true
+			continue
+		}
+		args = append(args, a)
+	}
+	if err := dispatch(os.Args[1], args); err != nil {
 		emit(map[string]any{"ok": false, "error": err.Error()})
 		os.Exit(1)
 	}
@@ -146,6 +154,10 @@ func cmdIngest(args []string) error {
 	if err != nil {
 		return err
 	}
+	if pretty() {
+		prettyIngest(res)
+		return nil
+	}
 	emitVal(res)
 	return nil
 }
@@ -204,6 +216,10 @@ func cmdSearch(args []string) error {
 	if err != nil {
 		return err
 	}
+	if pretty() {
+		prettySearch(hits)
+		return nil
+	}
 	emit(map[string]any{"ok": true, "hits": hits})
 	return nil
 }
@@ -224,6 +240,10 @@ func cmdContext(args []string) error {
 	if err != nil {
 		return err
 	}
+	if pretty() {
+		prettyContext(res)
+		return nil
+	}
 	emitVal(res)
 	return nil
 }
@@ -243,6 +263,10 @@ func cmdHistory(args []string) error {
 	res, err := e.History(strings.Join(fs.Args(), " "))
 	if err != nil {
 		return err
+	}
+	if pretty() {
+		prettyHistory(res)
+		return nil
 	}
 	emitVal(res)
 	return nil
@@ -282,6 +306,10 @@ func cmdConflicts(args []string) error {
 	if err != nil {
 		return err
 	}
+	if pretty() {
+		prettyConflicts(conf)
+		return nil
+	}
 	emit(map[string]any{"ok": true, "conflicts": conf, "count": len(conf)})
 	return nil
 }
@@ -294,6 +322,10 @@ func cmdSync(args []string) error {
 	sr, applied, conf, err := e.Sync()
 	if err != nil {
 		return err
+	}
+	if pretty() {
+		prettySync(sr, applied, len(conf))
+		return nil
 	}
 	emit(map[string]any{"ok": true, "sync": sr, "applied": applied, "conflicts": conf, "conflict_count": len(conf)})
 	return nil
@@ -420,5 +452,9 @@ ADMIN
   rebuild      discard graph cache and replay the whole log
   export --canonical   deterministic dump for replay verification
   doctor       verify hash chains and report store health
+
+OUTPUT
+  human-readable on a terminal; stable JSON when piped (what agents consume).
+  pass --json to force JSON on a terminal.
 `)
 }

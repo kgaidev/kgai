@@ -4,6 +4,13 @@
 > code — *what* changed, *why*, and *how it evolved* — so the reasoning never lives only
 > in someone's head.
 
+<p align="center">
+  <img src="docs/demo.gif" alt="kgai demo: a dev's AI records a decision, it syncs to the team, and weeks later QA's AI already knows why" width="560">
+</p>
+<p align="center">
+  <a href="https://kgai.dev">kgai.dev</a> · one command to install · local-first · MIT
+</p>
+
 Codebases record *what* the code is. They rarely record *why* it's that way: why invoicing
 was split out of pricing, why this service owns sessions, which approach you rejected and
 what you'd break by going back. That reasoning lives in people's heads and in old chat
