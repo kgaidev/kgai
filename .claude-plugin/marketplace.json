@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "kgai-marketplace",
   "metadata": {
-    "description": "Give your codebase a memory — kgai captures the engineering decisions behind your code, automatically, for your AI."
+    "description": "Shared memory for software teams building with AI — decisions, the why, and the dead ends, captured automatically."
   },
   "owner": {
     "name": "kgai maintainers",
@@ -13,7 +13,7 @@
     {
       "name": "kgai",
       "source": "./",
-      "description": "Give your codebase a memory — AI-captured engineering decisions and the why behind them."
+      "description": "Shared memory for your dev team — your AI records the why behind the code, recalls it before changes, and syncs it without merge conflicts."
     }
   ]
 }

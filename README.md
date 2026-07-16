@@ -1,47 +1,66 @@
-# kgai — give your codebase a memory
+# kgai — shared memory for software teams building with AI
 
-> An AI-first knowledge graph that automatically captures the **decisions** behind your
-> code — *what* changed, *why*, and *how it evolved* — so the reasoning never lives only
-> in someone's head.
+> **Your dev team already decided this. Nobody remembers why.**
+> The *why* behind your code lives in people's heads and lost chat threads — and every AI
+> coding session starts from zero. kgai is the missing shared memory: add it to your AI
+> workflow once, and it **captures, syncs and recalls decisions by itself** while you work.
 
 <p align="center">
   <img src="docs/demo.gif" alt="kgai demo: a dev's AI records a decision, it syncs to the team, and weeks later QA's AI already knows why" width="560">
 </p>
 <p align="center">
-  <a href="https://kgai.dev">kgai.dev</a> · one command to install · local-first · MIT
+  <a href="https://kgai.dev">kgai.dev</a> · local-first — your code never leaves · opt-in team sync (git/S3) · zero upkeep · MIT
 </p>
 
-Codebases record *what* the code is. They rarely record *why* it's that way: why invoicing
-was split out of pricing, why this service owns sessions, which approach you rejected and
-what you'd break by going back. That reasoning lives in people's heads and in old chat
-threads — and it walks out the door when they do.
+While you and your AI change code, kgai records the structural decisions into a small,
+searchable knowledge graph — what changed, *why*, and what was rejected — **automatically,
+without you asking**. Before touching an area, your AI checks what was already decided.
+Nothing is ever overwritten, so you can always ask *how did this get this way?* and get
+the full story.
 
-**kgai** captures it as you work. While you and Claude change code, it records the
-structural decisions into a small, searchable knowledge graph. Before touching an area, your
-AI checks what was already decided; after making a change, it captures the new decision —
-**automatically, without you asking**. Nothing is ever overwritten, so you can always ask
-*how did this get this way?* and get the full story.
+- **Syncs like version control — without the merge conflicts.** Every decision is an
+  immutable, content-addressed event; teammates (or their AIs) recording in parallel can
+  never produce a textual conflict. Only real *semantic* conflicts surface — as branches
+  you resolve with one new decision, and the resolution is kept too.
+- **It even remembers the dead ends.** Rejected approaches stay in the graph with the
+  reason they failed — so no engineer, and no AI, re-walks a path the team already proved
+  wrong.
+- **Measured, not promised.** 1,000,000 decisions, 30 concurrent writers: queries still
+  answer in ~100 ms. Numbers at [kgai.dev](https://kgai.dev/#scale).
 
 ## See it in action
 
-You tell Claude: *"invoices should be their own module, not part of pricing — refactor it."*
-Claude does the refactor **and**, on its own, records the decision:
+Alice ships product search. Her agent records the decision — by itself:
 
 ```
-✓ Recorded: "Invoice is a standalone module, independent of Pricing"
-  Invoice ──DEPENDS_ON──> (removed PART_OF)  ·  Pricing now depends on Invoice
+✓ recorded “Sold-out products stay visible in search”  d_1e67c079
+    supersedes d_1f7c715a — kept in history
 ```
 
-Three months later, someone (or their AI) is about to fold invoicing back into pricing.
-They ask first:
+Weeks later, QA is testing and hits something odd: *“sold-out products show up in search —
+bug?”* One question to the graph:
 
-```bash
-$ kg history "feature:Invoice"
-  2026-02  Invoice rendered inside the Pricing module
-  2026-05  Invoice split into a standalone module   ← why: "billing is its own domain…"  (current)
+```
+$ kg search "why are sold-out products visible in search"
+● Sold-out products stay visible in search   decision
+    Hiding sold-out items dropped organic landing traffic ~40%. Keep them visible as 'unavailable'.
+    → product-search
 ```
 
-The boundary was intentional, and the reasoning is right there. No archaeology, no guessing.
+And the whole evolution — the dead end included:
+
+```
+$ kg history "feature:product-search"
+feature:product-search — 2 decision(s), oldest first
+
+  2026-05-02  Search hides sold-out products              superseded
+      why: Sold-out items clutter the results; hide them until restock.
+
+  2026-07-16  Sold-out products stay visible in search    ● current
+      why: Hiding sold-out items dropped organic landing traffic ~40%.
+```
+
+Not a bug — decided on purpose. Ticket closed in two minutes, no dev interrupted.
 
 ## Quick start
 
@@ -151,15 +170,36 @@ By default the KG is **per-project**: each project gets its own graph in
 `.gitignore`). The engine binary itself is shared in `~/.kgai`. Point `KGAI_STORE` at a
 shared path if you want several projects to write into one graph.
 
+## Team sync
+
+Share one memory across the whole team — humans and AIs alike:
+
+```bash
+kg init --remote s3://your-bucket/team-kg    # or a git URL
+kg sync                                      # push your decisions, pull everyone else's
+```
+
+- Works over a **git repo or S3 bucket you own** (any S3-compatible store). No server,
+  no lock-in.
+- Decisions are immutable, content-addressed events in per-writer append-only shards —
+  parallel writers **cannot** produce a textual conflict, and every machine replays the
+  shared log to a byte-identical graph.
+- Genuinely contradictory decisions (the same element decided two ways) surface as a
+  **branch** via `kg conflicts`; you resolve it by recording one decision that supersedes
+  both — and the branch *and* its resolution stay in history.
+- Copied stores are detected (identity is machine-bound) and fail loudly instead of
+  silently forking history; `kg rotate` gives a copied store a fresh identity.
+- Validated with 8-way concurrent syncs against production S3 and at 1,000,000-decision
+  scale — numbers at [kgai.dev](https://kgai.dev/#scale).
+
 ## Roadmap
 
-- **Team sharing** — sync the graph across developers via a shared remote, with
-  conflict-free merging of everyone's decisions. (The engine groundwork exists; it will
-  be exposed as a supported feature once polished.)
-- Prebuilt binaries for Linux (x86_64, aarch64) via GitHub Releases — see
-  [`.github/workflows/build.yml`](.github/workflows/build.yml).
+- **kgai cloud** — hosted sync plane, an interactive graph you can explore in the browser,
+  and an MCP endpoint to plug the shared memory into any AI. Beta: [kgai.dev](https://kgai.dev/#cloud)
+  or team@kgai.dev.
 - macOS prebuilds (needs `@loader_path` linking + a DYLD-aware launcher).
 - Optional decision signing for zero-trust team remotes.
+- Contextual-search index for stores beyond ~100k decisions.
 
 ## License
 

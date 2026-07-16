@@ -3,13 +3,13 @@
   "name": "kgai",
   "displayName": "kgai — Knowledge Graph",
   "version": "0.1.6",
-  "description": "Give your codebase a memory. kgai automatically captures the engineering decisions behind your code — what changed, why, and how it evolved — into a searchable knowledge graph your AI reads before changing code and writes to after. The reasoning that used to live only in developers' heads, remembered forever.",
+  "description": "Shared memory for software teams building with AI. Your agent records the decisions behind your code — what changed, why, even the dead ends you ruled out — recalls them before changing code, and syncs them across the team without merge conflicts. Local-first, immutable, measured to 1M decisions.",
   "author": {
     "name": "kgai maintainers",
     "email": "team@kgai.dev"
   },
   "repository": "https://github.com/kgaidev/kgai",
-  "homepage": "https://github.com/kgaidev/kgai",
+  "homepage": "https://kgai.dev",
   "license": "MIT",
   "keywords": [
     "knowledge-graph",
