@@ -197,7 +197,13 @@ func (e *Engine) Context(q ContextQuery) (ContextResult, error) {
 		return ContextResult{}, err
 	}
 	links, _ := g.Raw(`MATCH (a:Element)-[r:LINK]->(b:Element) RETURN a.id AS f, r.kind AS k, b.id AS t, b.name AS tn, a.name AS fn`)
-	shapes, _ := g.Raw(`MATCH (d:Decision)-[:SHAPES]->(e:Element)
+	// Only current head decisions feed recall: authority SHAPES with no later
+	// authority decision superseding them (same predicate as headDecisions in
+	// engine.go). Superseded decisions stay in the log and are served by
+	// `kg history` on demand — they are not pinned into every context read.
+	shapes, _ := g.Raw(`MATCH (d:Decision)-[s:SHAPES]->(e:Element)
+		WHERE s.authority = true
+		  AND NOT EXISTS { MATCH (d2:Decision)-[:SUPERSEDES]->(d), (d2)-[s2:SHAPES]->(e) WHERE s2.authority = true }
 		RETURN e.id AS eid, d.id AS did, d.title AS title, d.rationale AS rationale,
 		  d.recorded_at AS recorded, d.lamport AS lamport ORDER BY d.lamport DESC`)
 
@@ -248,9 +254,14 @@ func (e *Engine) Context(q ContextQuery) (ContextResult, error) {
 		if filtered && score < 1 {
 			continue
 		}
-		// attach decisions (newest first), mark the head (first)
+		// attach head decisions (newest first). More than one entry means the
+		// element is genuinely decided two ways (a conflict) — cap defends
+		// against pathological chains, `kg conflicts` is the full view.
 		for i, d := range byEl[eid] {
-			it.Why = append(it.Why, ContextWhy{Title: d.title, Rationale: oneLine(d.rationale), When: d.when, IsHead: i == 0})
+			if i >= 4 {
+				break
+			}
+			it.Why = append(it.Why, ContextWhy{Title: d.title, Rationale: oneLine(d.rationale), When: d.when, IsHead: true})
 		}
 		it.Score = score
 		items = append(items, it)
