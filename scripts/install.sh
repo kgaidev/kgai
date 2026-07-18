@@ -65,9 +65,16 @@ fi
 # ---- 1. prebuilt release ----------------------------------------------------
 if [ -n "${KG_RELEASE_BASE:-}" ]; then
   os="$(uname -s | tr 'A-Z' 'a-z')"; arch="$(uname -m)"
-  case "$arch" in x86_64|amd64) arch=x86_64;; aarch64|arm64) arch=aarch64;; esac
+  if [ "$os" = "darwin" ]; then
+    # macOS: per-arch binary (arm64 | x86_64) + one universal dylib.
+    case "$arch" in x86_64|amd64) arch=x86_64;; aarch64|arm64) arch=arm64;; esac
+    lib_asset="libkuzu-darwin-universal.dylib"; lib_file="libkuzu.dylib"
+  else
+    case "$arch" in x86_64|amd64) arch=x86_64;; aarch64|arm64) arch=aarch64;; esac
+    lib_asset="libkuzu-$os-$arch.so"; lib_file="libkuzu.so"
+  fi
   if curl -fsSL -o "$KGAI_HOME/bin/kg.new" "$KG_RELEASE_BASE/kg-$os-$arch" 2>/dev/null \
-     && curl -fsSL -o "$LIBDIR/libkuzu.so" "$KG_RELEASE_BASE/libkuzu-$os-$arch.so" 2>/dev/null; then
+     && curl -fsSL -o "$LIBDIR/$lib_file" "$KG_RELEASE_BASE/$lib_asset" 2>/dev/null; then
     mv "$KGAI_HOME/bin/kg.new" "$BIN"; chmod +x "$BIN"
     report_ready "prebuilt $os-$arch"
     exit 0
@@ -77,17 +84,17 @@ fi
 
 # ---- 2. build from source ---------------------------------------------------
 if ! command -v go >/dev/null 2>&1; then
-  status "engine NOT installed: 'go' toolchain missing and no prebuilt release configured. See README."
+  status "⚠️ ENGINE NOT INSTALLED — kgai will NOT work this session. Prebuilt download failed and the 'go' toolchain is missing for a source build. Fix: install Go (https://go.dev/dl) or check network access to github.com releases, then start a new session."
   exit 0
 fi
 if ! command -v gcc >/dev/null 2>&1 && ! command -v cc >/dev/null 2>&1; then
-  status "engine NOT installed: C compiler (gcc/cc) missing (required by the native graph lib)."
+  status "⚠️ ENGINE NOT INSTALLED — kgai will NOT work this session. A C compiler (gcc/cc) is required to build the native graph lib. Fix: install Xcode CLT (macOS: xcode-select --install) or gcc, then start a new session."
   exit 0
 fi
 
 status "building engine from source (one-time, ~30s)…"
 if ! bash "$ROOT/scripts/fetch-libs.sh" >&2; then
-  status "engine build failed: could not fetch native graph library (offline?)."
+  status "⚠️ ENGINE NOT INSTALLED — kgai will NOT work this session. Could not fetch the native graph library (offline? github.com unreachable?). Fix connectivity and start a new session."
   exit 0
 fi
 
@@ -95,7 +102,7 @@ case "$(uname -s)/$(uname -m)" in
   Linux/x86_64|Linux/amd64)  libsub="linux-amd64" ;;
   Linux/aarch64|Linux/arm64) libsub="linux-arm64" ;;
   Darwin/*)                  libsub="darwin" ;;
-  *) status "unsupported platform $(uname -s)/$(uname -m)"; exit 0 ;;
+  *) status "⚠️ ENGINE NOT INSTALLED — unsupported platform $(uname -s)/$(uname -m). Linux (x86_64/aarch64) and macOS are supported."; exit 0 ;;
 esac
 
 if ( cd "$ROOT/src" && CGO_ENABLED=1 go build \
@@ -104,5 +111,5 @@ if ( cd "$ROOT/src" && CGO_ENABLED=1 go build \
   cp "$ROOT/third_party/go-kuzu/lib/dynamic/$libsub"/libkuzu.* "$LIBDIR/" 2>/dev/null || true
   report_ready "built from source"
 else
-  status "engine build failed (see log above)."
+  status "⚠️ ENGINE NOT INSTALLED — source build failed (see log above)."
 fi

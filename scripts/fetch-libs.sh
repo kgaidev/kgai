@@ -29,7 +29,7 @@ case "$os" in
 esac
 
 stamp="$DEST/.fetched-$KUZU_VERSION-$GOKUZU_VERSION-$libdir"
-if [ -f "$stamp" ] && [ -f "$DEST/lib/dynamic/$libdir/libkuzu.so" ]; then
+if [ -f "$stamp" ] && ls "$DEST/lib/dynamic/$libdir"/libkuzu.* >/dev/null 2>&1; then
   echo "fetch-libs: already present ($KUZU_VERSION / $GOKUZU_VERSION / $libdir)"
   exit 0
 fi

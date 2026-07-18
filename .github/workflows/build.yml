@@ -4,9 +4,12 @@ name: build-prebuilt
 # them to the GitHub Release. install.sh downloads these (KG_RELEASE_BASE defaults to this
 # repo's latest release), so end users need neither Go nor a C compiler.
 #
-# Native runners only (no CGO cross-compile): each job builds on its own architecture and
-# fetch-libs.sh pulls the matching prebuilt libkuzu. macOS is intentionally not built yet —
-# it needs @loader_path rpath + a DYLD-aware shim; see README "Roadmap".
+# Native runners (no CGO cross-compile) — except darwin-x86_64, which is cross-built on
+# the arm64 macOS runner (Apple clang multi-arch) against the universal libkuzu dylib and
+# smoke-tested under Rosetta.
+#
+# The release is created exactly once (prepare-release) before any artifacts exist; the
+# matrix jobs only upload. This removes the create-race that failed the v0.1.7 arm build.
 
 on:
   push:
@@ -17,17 +20,37 @@ permissions:
   contents: write
 
 jobs:
+  prepare-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create release (idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+
   build:
+    needs: [prepare-release]
+    if: ${{ !cancelled() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
+            os: linux
             arch: x86_64
-            goarch: amd64
+            libdir: linux-amd64
           - runner: ubuntu-24.04-arm
+            os: linux
             arch: aarch64
-            goarch: arm64
+            libdir: linux-arm64
+          - runner: macos-14
+            os: darwin
+            arch: arm64
+            libdir: darwin
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -45,34 +68,57 @@ jobs:
         env:
           CGO_ENABLED: '1'
         run: |
-          go build -ldflags="-extldflags '-Wl,-rpath,\$ORIGIN/../lib'" -o kg .
+          if [ "${{ matrix.os }}" = "darwin" ]; then
+            go build -ldflags="-extldflags '-Wl,-rpath,@loader_path/../lib'" -o kg .
+          else
+            go build -ldflags="-extldflags '-Wl,-rpath,\$ORIGIN/../lib'" -o kg .
+          fi
 
-      - name: Smoke test the binary
+      # Intel Macs get a cross-built binary from the same runner: Apple clang compiles
+      # both arches and the kuzu dylib is universal.
+      - name: Build kg (darwin x86_64 cross)
+        if: matrix.os == 'darwin'
+        working-directory: src
+        env:
+          CGO_ENABLED: '1'
+          GOARCH: amd64
+          CC: cc -arch x86_64
         run: |
-          LD_LIBRARY_PATH="third_party/go-kuzu/lib/dynamic/linux-${{ matrix.goarch }}" \
-            src/kg version
+          go build -ldflags="-extldflags '-Wl,-rpath,@loader_path/../lib'" -o kg-x86_64 .
+
+      - name: Smoke test
+        run: |
+          if [ "${{ matrix.os }}" = "darwin" ]; then
+            DYLD_LIBRARY_PATH="third_party/go-kuzu/lib/dynamic/darwin" src/kg version
+            DYLD_LIBRARY_PATH="third_party/go-kuzu/lib/dynamic/darwin" arch -x86_64 src/kg-x86_64 version
+          else
+            LD_LIBRARY_PATH="third_party/go-kuzu/lib/dynamic/${{ matrix.libdir }}" src/kg version
+          fi
 
       - name: Stage artifacts
         run: |
           mkdir -p dist
-          cp src/kg "dist/kg-linux-${{ matrix.arch }}"
-          cp "third_party/go-kuzu/lib/dynamic/linux-${{ matrix.goarch }}/libkuzu.so" \
-             "dist/libkuzu-linux-${{ matrix.arch }}.so"
+          if [ "${{ matrix.os }}" = "darwin" ]; then
+            cp src/kg dist/kg-darwin-arm64
+            cp src/kg-x86_64 dist/kg-darwin-x86_64
+            cp third_party/go-kuzu/lib/dynamic/darwin/libkuzu.dylib dist/libkuzu-darwin-universal.dylib
+          else
+            cp src/kg "dist/kg-${{ matrix.os }}-${{ matrix.arch }}"
+            cp "third_party/go-kuzu/lib/dynamic/${{ matrix.libdir }}/libkuzu.so" \
+               "dist/libkuzu-${{ matrix.os }}-${{ matrix.arch }}.so"
+          fi
           ls -la dist
 
-      # On a tag push, create/attach the release with the built binaries.
-      - name: Create release + attach binaries
+      - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
-        with:
-          files: dist/*
-          generate_release_notes: true
-          make_latest: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber
 
       # Manual (workflow_dispatch) runs just publish artifacts for inspection.
       - name: Upload as workflow artifact
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
-          name: kg-linux-${{ matrix.arch }}
+          name: kg-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*

@@ -23,4 +23,5 @@ if [ ! -x "$BIN" ]; then
 fi
 
 export LD_LIBRARY_PATH="$LIB:${LD_LIBRARY_PATH:-}"
+export DYLD_LIBRARY_PATH="$LIB:${DYLD_LIBRARY_PATH:-}"
 exec "$BIN" "$@"
