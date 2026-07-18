@@ -70,7 +70,9 @@ claude plugin marketplace add kgaidev/kgai
 claude plugin install kgai@kgai-marketplace
 ```
 
-On first run the plugin sets itself up automatically (downloads a small prebuilt engine to
+On first run the plugin sets itself up automatically — prebuilt engine binaries ship for
+**Linux** (x86_64, aarch64) and **macOS** (Apple Silicon + Intel), so you need neither Go
+nor a C compiler (it downloads the engine to
 `~/.kgai`; falls back to building from source if needed). Then just work normally — Claude
 reads and records decisions on its own. To record or query by hand:
 
@@ -197,7 +199,6 @@ kg sync                                      # push your decisions, pull everyon
 - **kgai cloud** — hosted sync plane, an interactive graph you can explore in the browser,
   and an MCP endpoint to plug the shared memory into any AI. Beta: [kgai.dev](https://kgai.dev/#cloud)
   or team@kgai.dev.
-- macOS prebuilds (needs `@loader_path` linking + a DYLD-aware launcher).
 - Optional decision signing for zero-trust team remotes.
 - Contextual-search index for stores beyond ~100k decisions.
 
