@@ -97,7 +97,7 @@ func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	root := fs.String("root", "", "store root (default: $KGAI_STORE or <project>/.kgai/store)")
 	actor := fs.String("actor", "", "actor/author name for this install")
-	remote := fs.String("remote", "", "sync remote: git URL, s3://bucket/prefix, or kgai://org/project (experimental)")
+	remote := fs.String("remote", "", "sync remote: s3://bucket/prefix (supported), git URL (experimental), kgai://org/project (beta)")
 	token := fs.String("token", "", "kgai cloud token (stored install-locally, 0600)")
 	cloudURL := fs.String("cloud-url", "", "kgai cloud broker base URL (overridable by KGAI_CLOUD_URL)")
 	if err := fs.Parse(args); err != nil {
@@ -445,8 +445,9 @@ READ
   conflicts [--about X]                               elements shaped by >1 head decision
 
 ADMIN
-  sync         (experimental) exchange the log with the configured remote
-               (git URL, or s3://bucket/prefix), then rebuild the projection
+  sync         exchange the log with the configured remote, then rebuild the
+               projection. s3://bucket/prefix is supported; git URLs are
+               experimental (untested)
   rotate       give this store a fresh install identity (fix for a copied store
                after sync reports a shard fork)
   rebuild      discard graph cache and replay the whole log

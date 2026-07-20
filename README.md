@@ -3,13 +3,14 @@
 > **Your dev team already decided this. Nobody remembers why.**
 > The *why* behind your code lives in people's heads and lost chat threads — and every AI
 > coding session starts from zero. kgai is the missing shared memory: add it to your AI
-> workflow once, and it **captures, syncs and recalls decisions by itself** while you work.
+> workflow once, and it **captures and recalls decisions by itself** while you work.
+> Team sync is opt-in (your own S3; git experimental).
 
 <p align="center">
   <img src="docs/demo.gif" alt="kgai demo: a dev's AI records a decision, it syncs to the team, and weeks later QA's AI already knows why" width="560">
 </p>
 <p align="center">
-  <a href="https://kgai.dev">kgai.dev</a> · local-first — your code never leaves · opt-in team sync (git/S3) · zero upkeep · MIT
+  <a href="https://kgai.dev">kgai.dev</a> · local-first — your code never leaves · opt-in team sync (your own S3) · zero upkeep · MIT
 </p>
 
 While you and your AI change code, kgai records the structural decisions into a small,
@@ -25,8 +26,8 @@ the full story.
 - **It even remembers the dead ends.** Rejected approaches stay in the graph with the
   reason they failed — so no engineer, and no AI, re-walks a path the team already proved
   wrong.
-- **Measured, not promised.** 1,000,000 decisions, 30 concurrent writers: queries still
-  answer in ~100 ms. Numbers at [kgai.dev](https://kgai.dev/#scale).
+- **Measured, not promised.** 1,000,000 decisions across 30 writers' shards: queries
+  still answer in ~100 ms. Numbers at [kgai.dev](https://kgai.dev/#scale).
 
 ## See it in action
 
@@ -177,22 +178,23 @@ shared path if you want several projects to write into one graph.
 Share one memory across the whole team — humans and AIs alike:
 
 ```bash
-kg init --remote s3://your-bucket/team-kg    # or a git URL
-kg sync                                      # push your decisions, pull everyone else's
+kg init --remote s3://your-bucket/team-kg
+kg sync                                      # or /kgai:kg-sync from Claude Code
 ```
 
-- Works over a **git repo or S3 bucket you own** (any S3-compatible store). No server,
-  no lock-in.
+- The **S3 transport is the supported path** — any S3-compatible bucket you own. No
+  server, no lock-in. It is exercised by the test suite (write-once races, copied-store
+  fork detection) and by archived benchmark runs up to 1,000,000-decision stores.
+- **Git remotes are implemented but experimental** — not yet systematically tested.
+- A hosted sync plane (**kgai cloud**) is in closed beta — [kgai.dev](https://kgai.dev/#cloud).
 - Decisions are immutable, content-addressed events in per-writer append-only shards —
   parallel writers **cannot** produce a textual conflict, and every machine replays the
-  shared log to a byte-identical graph.
+  shared log to the same graph (verifiable with `kg export --canonical`).
 - Genuinely contradictory decisions (the same element decided two ways) surface as a
   **branch** via `kg conflicts`; you resolve it by recording one decision that supersedes
   both — and the branch *and* its resolution stay in history.
 - Copied stores are detected (identity is machine-bound) and fail loudly instead of
   silently forking history; `kg rotate` gives a copied store a fresh identity.
-- Validated with 8-way concurrent syncs against production S3 and at 1,000,000-decision
-  scale — numbers at [kgai.dev](https://kgai.dev/#scale).
 
 ## Roadmap
 

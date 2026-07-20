@@ -72,10 +72,12 @@ hash, so identical content is idempotent and any change is a new immutable decis
 
 ## Sync and conflicts
 
-> **Status:** the sync mechanisms below are implemented in the engine (`kg sync`) but team
-> sharing is **not yet exposed as a supported feature** — no slash command ships for it
-> and the docs don't advertise it. It's on the roadmap; the design is recorded here so
-> the storage decisions (shards, union merge) make sense.
+> **Status:** the **S3 transport is validated and supported** — exercised with concurrent
+> writers, write-once arbitration races, copied-store fork detection and 1M-decision
+> stores against both MinIO and production S3 (raw runs archived in the bench archive).
+> The **git transport is implemented but untested — treat it as experimental.** The
+> hosted broker (`kgai://`) is in closed beta. Team sync is exposed via `kg sync` and
+> the `/kgai:kg-sync` slash command.
 
 Transports are pluggable (`internal/remote`, chosen by the remote URL scheme):
 
