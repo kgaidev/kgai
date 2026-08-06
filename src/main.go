@@ -591,10 +591,19 @@ func cmdConfig(args []string) error {
 				return fmt.Errorf("set needs a value: `kg config set %s <value>`, `--from-file F`, or `-` to read stdin (use `kg config unset %s` to clear it)", key, key)
 			}
 		}
+		// Changing where the store lives can strand an existing log: the decisions are
+		// still on disk, just not where anything looks any more. Say so once, here.
+		before, _ := store.ResolveRoot()
 		if err := writeConfig(scope, key, val); err != nil {
 			return err
 		}
-		return showConfig()
+		note := ""
+		if key == "store" {
+			if after, err := store.ResolveRoot(); err == nil && after != before && store.HasEvents(before) {
+				note = fmt.Sprintf("the previous store at %s still holds recorded decisions — they are not visible from this repo any more. To carry them over, copy its log/*.ndjson into %s/log/ and run `kg rebuild` (docs/SHARED-STORE.md).", before, after)
+			}
+		}
+		return showConfigWithNote(note)
 	}
 	return fmt.Errorf("unknown config subcommand %q — use show, get, set or unset", sub)
 }
@@ -780,7 +789,9 @@ func loadLayers() ([]store.Layer, string) {
 	return layers, ""
 }
 
-func showConfig() error {
+func showConfig() error { return showConfigWithNote("") }
+
+func showConfigWithNote(extra string) error {
 	layers, storeErr := loadLayers()
 	effective := map[string]any{}
 	sources := map[string]any{}
@@ -805,6 +816,9 @@ func showConfig() error {
 	}
 	if storeErr != "" && out["store_error"] == nil {
 		out["store_error"] = storeErr
+	}
+	if extra != "" {
+		out["previous_store"] = extra
 	}
 	// A repo config waiting for approval is reported, never silently ignored: an
 	// unexplained fallback to the per-project store is how decisions end up in a graph

@@ -540,3 +540,22 @@ func projectStart() string {
 	}
 	return wd
 }
+
+// HasEvents reports whether a store directory holds any recorded decisions. Used to warn
+// before a `store` change makes an existing log invisible from here — the switch is
+// cheap to make and easy to make by accident, and nothing else would mention the
+// decisions left behind.
+func HasEvents(root string) bool {
+	entries, err := os.ReadDir(filepath.Join(root, "log"))
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".ndjson") {
+			if fi, err := e.Info(); err == nil && fi.Size() > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}

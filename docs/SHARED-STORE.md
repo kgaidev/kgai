@@ -156,3 +156,7 @@ kg config unset --project store    # this repo only; --global if you set it mach
 
 The repository returns to `<project>/.kgai/store`, and the per-project store that was
 there before the switch is still exactly where it was.
+
+Going back is not symmetric, and `kg config` says so: whatever the repo recorded into the
+shared store stays there and is no longer visible from here. The command reports the
+previous store's path and how to carry the decisions over when it held any.
