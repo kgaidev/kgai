@@ -4,6 +4,31 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Fixed
+- **The `kg` launcher reaches your terminal's PATH on macOS.** v1.4.0 decided whether
+  `~/.local/bin` needed a profile line by looking at the PATH of the process running the
+  hook. That is Claude Code's environment, not your Terminal's: it already carries
+  `~/.local/bin` (that is where the Claude Code CLI installs itself), so the installer
+  concluded there was nothing to do and wrote no profile line — and a fresh Terminal, which
+  builds its PATH from the login files, still answered `command not found: kg`. The
+  question is now asked of the files that actually build a terminal's PATH — `/etc/paths`,
+  `/etc/paths.d`, the system profiles, and the login shell's own rc files — matching
+  `~/…` and `$HOME/…` as well as the expanded path, so nothing is written twice.
+- **The profile line lands in the file your terminals read.** The target file was chosen
+  from `$SHELL`, which is merely whatever shell started Claude Code — on a Mac whose
+  Terminal windows are zsh it is often `/bin/bash`, and the line went to `.bash_profile`,
+  which zsh never reads. The login shell now comes from the account record (`dscl` on
+  macOS, the passwd entry elsewhere), with `$SHELL` as the fallback.
+- **An engine that cannot run is no longer reported as ready.** The installer announced
+  "engine ready" for a binary it had never executed, so a Mac whose engine could not load
+  `libkuzu.dylib` — or was refused by the OS — looked healthy while every `kg` command
+  failed silently behind the hooks. Each install now runs `kg version` (the cheapest
+  command that still loads the native library) before saying it is ready: a prebuilt that
+  will not run falls back to a source build, and an engine that stops running is reported
+  loudly, once per session, with the one-line repair.
+
 ## [1.4.0] - 2026-08-04
 
 ### Fixed

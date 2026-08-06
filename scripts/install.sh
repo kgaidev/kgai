@@ -111,9 +111,10 @@ PATH_RC=""
 write_launcher() {
   local dest="$USER_BIN/kg"
   mkdir -p "$USER_BIN" 2>/dev/null || return 1
-  # Never clobber a different tool's binary that happens to be called kg.
+  # Never clobber a different tool's binary that happens to be called kg. Distinct from
+  # a write failure (return 1) so the status line can say which one actually happened.
   if [ -e "$dest" ] && ! grep -q 'kgai launcher' "$dest" 2>/dev/null; then
-    return 1
+    return 2
   fi
   # A launcher script, not a symlink: the macOS rpath is @loader_path/../lib, resolved
   # against the path the binary was started from. Through a symlink in ~/.local/bin that
@@ -140,20 +141,75 @@ LAUNCHER
   chmod +x "$dest.new" && mv "$dest.new" "$dest"
 }
 
+# The shell that OWNS the user's terminals. $SHELL is merely whatever spawned this hook:
+# Claude Code can be started from a bash session, from a GUI app, or from a launcher that
+# sets it to something else entirely, so on a Mac whose Terminal windows are zsh it often
+# reads /bin/bash — and the PATH line then lands in .bash_profile, which zsh never reads.
+# The passwd entry is what Terminal actually opens, so it wins where it can be read.
+login_shell() {
+  local s=""
+  case "$(uname -s)" in
+    # Directory Service, not /etc/passwd: a normal macOS account has no passwd entry.
+    Darwin) s="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk 'NR==1{print $2}')" ;;
+    *)      s="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)" ;;
+  esac
+  [ -n "$s" ] || s="$(awk -F: -v u="$(id -un)" '$1==u{print $7}' /etc/passwd 2>/dev/null | head -n1)"
+  printf '%s\n' "${s:-${SHELL:-sh}}"
+}
+
+shell_family() {
+  case "$(basename "$(login_shell)")" in
+    zsh) echo zsh ;; bash) echo bash ;; fish) echo fish ;; *) echo sh ;;
+  esac
+}
+
+# Profile files a fresh terminal of that shell reads. Order is "where we would add it"
+# first. A macOS Terminal tab is a LOGIN shell (bash reads .bash_profile, not .bashrc);
+# a Linux terminal window is not (bash reads .bashrc).
+rc_files() {
+  case "$(shell_family)" in
+    zsh)  printf '%s\n' "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.zshenv" "$HOME/.zlogin" ;;
+    bash) if [ "$(uname -s)" = "Darwin" ]
+          then printf '%s\n' "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.bash_login" "$HOME/.profile"
+          else printf '%s\n' "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; fi ;;
+    fish) printf '%s\n' "$HOME/.config/fish/config.fish" ;;
+    *)    printf '%s\n' "$HOME/.profile" ;;
+  esac
+}
+
+# Will a NEW terminal find $USER_BIN? This process's own PATH cannot answer that: Claude
+# Code hands hooks an environment of its own making — on macOS a GUI-launched app inherits
+# launchd's PATH, and the CLI's installer puts `claude` in ~/.local/bin and exports it for
+# its children. Either way $USER_BIN can be on PATH here while the user's Terminal has
+# never heard of it, and the old check then skipped the profile line — the exact reason
+# `kg` stayed command-not-found on a Mac. So ask the files that build a terminal's PATH:
+# the system-wide configuration plus the login shell's own profiles.
+path_covered() {
+  local rel="${USER_BIN#"$HOME"/}" f
+  # Read the candidates instead of splitting them on whitespace — a home directory with a
+  # space in it is legal on macOS.
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    grep -qF "$USER_BIN" "$f" 2>/dev/null && return 0
+    [ "$rel" = "$USER_BIN" ] && continue   # $USER_BIN lives outside $HOME
+    # People write it unexpanded far more often than not.
+    grep -qF "\$HOME/$rel" "$f" 2>/dev/null && return 0
+    grep -qF "~/$rel" "$f" 2>/dev/null && return 0
+  done < <(printf '%s\n' /etc/paths /etc/paths.d/* /etc/profile /etc/zprofile \
+                         /etc/zshrc /etc/profile.d/* /etc/environment; rc_files)
+  return 1
+}
+
 # Appends one marked PATH line to the file the user's login shell reads. Returns 0 only
 # when it actually added it, so the status line mentions it exactly once.
 ensure_path_entry() {
-  case ":${PATH}:" in *":$USER_BIN:"*) return 1 ;; esac
+  path_covered && return 1
   local rc line
-  case "$(basename "${SHELL:-sh}")" in
-    zsh)  rc="$HOME/.zshrc";  line="export PATH=\"$USER_BIN:\$PATH\"" ;;
-    # A macOS Terminal tab is a LOGIN bash shell, which reads .bash_profile, not .bashrc.
-    bash) if [ "$(uname -s)" = "Darwin" ]; then rc="$HOME/.bash_profile"; else rc="$HOME/.bashrc"; fi
-          line="export PATH=\"$USER_BIN:\$PATH\"" ;;
-    fish) rc="$HOME/.config/fish/config.fish"; line="set -gx PATH $USER_BIN \$PATH" ;;
-    *)    rc="$HOME/.profile"; line="export PATH=\"$USER_BIN:\$PATH\"" ;;
+  rc="$(rc_files | head -n1)"
+  case "$(shell_family)" in
+    fish) line="set -gx PATH $USER_BIN \$PATH" ;;
+    *)    line="export PATH=\"$USER_BIN:\$PATH\"" ;;
   esac
-  grep -qF "$USER_BIN" "$rc" 2>/dev/null && return 1
   mkdir -p "$(dirname "$rc")" 2>/dev/null || return 1
   printf '\n%s\n%s\n' "$KGAI_MARK" "$line" >> "$rc" 2>/dev/null || return 1
   PATH_RC="$rc"
@@ -162,8 +218,12 @@ ensure_path_entry() {
 
 ensure_on_path() {
   PATH_NOTE=""
-  if ! write_launcher; then
+  write_launcher; local w=$?
+  if [ "$w" = 2 ]; then
     PATH_NOTE="note: kept the existing \`kg\` in $USER_BIN (not ours) — the plugin's engine is at $BIN. "
+    return 0
+  elif [ "$w" != 0 ]; then
+    PATH_NOTE="note: could not write $USER_BIN/kg (no permission?) — inside Claude Code \`kg\` still works; in your own terminal run $BIN. "
     return 0
   fi
   if ensure_path_entry; then
@@ -177,7 +237,29 @@ ensure_store() {
   proj="$(project_root)"
   cfg="$proj/.kgai/store/kg.config.json"
   [ -f "$cfg" ] && return 0
-  ( cd "$proj" && KGAI_HOME="$KGAI_HOME" LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" "$BIN" init ) >/dev/null 2>&1 || true
+  ( cd "$proj" && KGAI_HOME="$KGAI_HOME" \
+      LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
+      DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" init ) >/dev/null 2>&1 || true
+}
+
+# An installed file is not a working engine. `kg version` is the cheapest command that
+# still loads the native graph library, so it proves the whole chain: right architecture,
+# dylib found next to the binary, allowed to run by the OS. Without this the installer
+# announced "engine ready" for a binary that died on its first call, and every kg command
+# for the rest of the session failed silently behind `|| true`.
+ENGINE_ERR=""
+engine_works() {
+  local out rc
+  out="$(KGAI_HOME="$KGAI_HOME" LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
+           DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" version 2>&1)"
+  rc=$?
+  if [ "$rc" = 0 ]; then ENGINE_ERR=""; return 0; fi
+  # One line, first non-empty: dyld and the loader are verbose, the status line is not.
+  # A signal kill (9/SIGKILL → 137) prints nothing we can capture; on macOS that is
+  # almost always the OS refusing a binary whose signature it does not accept.
+  ENGINE_ERR="$(printf '%s' "$out" | grep -v '^[[:space:]]*$' | head -n1)"
+  [ -n "$ENGINE_ERR" ] || ENGINE_ERR="exited with code $rc"
+  return 1
 }
 
 report_ready() {
@@ -209,6 +291,14 @@ HAVE="$(cat "$KGAI_HOME/.srcver" 2>/dev/null || true)"
 # engine can be up to date while the user's PATH entry is missing — deleted, new machine,
 # or installed before the launcher shipped.
 if [ -x "$BIN" ] && [ "$WANT" = "$HAVE" ]; then
+  # An engine that stopped running (deleted dylib, OS upgrade, moved home) would otherwise
+  # keep passing this check forever while every command silently failed. Say so, loudly,
+  # and point at the one-line repair — reinstalling on its own would re-download the same
+  # bytes that already do not run here.
+  if ! engine_works; then
+    status "⚠️ ENGINE INSTALLED BUT NOT RUNNING — kgai will NOT work this session ($ENGINE_ERR). Fix: rm -rf \"$KGAI_HOME\" and start a new session to reinstall it."
+    exit 0
+  fi
   ensure_on_path
   ensure_store
   [ -n "$PATH_NOTE" ] && status "$PATH_NOTE"
@@ -232,11 +322,17 @@ if [ -n "${KG_RELEASE_BASE:-}" ]; then
      && verify_asset "$LIBDIR/$lib_file.new" "$lib_asset"; then
     mv "$KGAI_HOME/bin/kg.new" "$BIN"; chmod +x "$BIN"
     mv "$LIBDIR/$lib_file.new" "$LIBDIR/$lib_file"
-    report_ready "prebuilt $os-$arch"
-    exit 0
+    if engine_works; then
+      report_ready "prebuilt $os-$arch"
+      exit 0
+    fi
+    # Downloaded fine, checksum matched, still will not run here: a source build is the
+    # one remaining self-heal (it produces a binary for THIS machine), so try it.
+    status "prebuilt $os-$arch does not run on this machine ($ENGINE_ERR) — trying a source build…"
+  else
+    rm -f "$KGAI_HOME/bin/kg.new" "$LIBDIR/$lib_file.new"
+    status "prebuilt download failed, falling back to source build…"
   fi
-  rm -f "$KGAI_HOME/bin/kg.new" "$LIBDIR/$lib_file.new"
-  status "prebuilt download failed, falling back to source build…"
 fi
 
 # ---- 2. build from source ---------------------------------------------------
@@ -268,7 +364,11 @@ if ( cd "$ROOT/src" && CGO_ENABLED=1 go build \
         -ldflags="-X main.version=$PLUGIN_VERSION -extldflags '-Wl,-rpath,$rpath'" \
         -o "$BIN" . ) >&2; then
   cp "$ROOT/third_party/go-kuzu/lib/dynamic/$libsub"/libkuzu.* "$LIBDIR/" 2>/dev/null || true
-  report_ready "built from source"
+  if engine_works; then
+    report_ready "built from source"
+  else
+    status "⚠️ ENGINE NOT INSTALLED — it built, but does not run here ($ENGINE_ERR). kgai will NOT work this session."
+  fi
 else
   status "⚠️ ENGINE NOT INSTALLED — source build failed (see log above)."
 fi
