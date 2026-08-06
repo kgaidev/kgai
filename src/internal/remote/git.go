@@ -65,12 +65,17 @@ func (g *gitRemote) commit(s *store.Store, msg string) error {
 	if _, err := git(s.Root, "add", "-A"); err != nil {
 		return err
 	}
-	// Belt and braces on top of .gitignore: unstage the install-local files whatever the
-	// ignore rules say. kg.config.json carries the cloud token, and a store whose ignore
-	// file was replaced or mangled by a merge would otherwise commit it to a repo the
-	// whole team pulls. --ignore-unmatch makes this a no-op when they are absent.
-	if _, err := git(s.Root, "rm", "--cached", "-q", "--ignore-unmatch", "--",
-		"kg.config.json", ".kg.lock", "last-autosync.json", ".autosync-stamp"); err != nil {
+	// Belt and braces on top of .gitignore: unstage everything the scaffold excludes,
+	// whatever the ignore rules currently say. kg.config.json carries the cloud token and
+	// graph.kuzu is rewritten on every decision, so a store whose ignore file was replaced
+	// would otherwise commit them to a repo the whole team pulls — and once tracked, git
+	// ignores the ignore rules, so restoring the file does not undo it.
+	//
+	// The list is DERIVED from the scaffold's own rules: hardcoding a second copy here is
+	// what let graph.kuzu* and *.so through while the .gitignore covered them.
+	// --ignore-unmatch makes this a no-op when nothing matches.
+	args := append([]string{"rm", "--cached", "-q", "--ignore-unmatch", "--"}, store.ScaffoldIgnorePatterns()...)
+	if _, err := git(s.Root, args...); err != nil {
 		return err
 	}
 	if out, _ := git(s.Root, "status", "--porcelain"); strings.TrimSpace(out) == "" {

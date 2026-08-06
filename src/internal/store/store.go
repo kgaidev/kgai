@@ -446,6 +446,18 @@ func scaffoldIgnoreFile() string {
 	return b.String()
 }
 
+// ScaffoldIgnorePatterns is the store's ignore list as git pathspecs, for callers that
+// must exclude the same set by another mechanism. Derived from scaffoldRules so a rule
+// cannot be protected in the .gitignore and forgotten by the transport — the shape of
+// defect this table was introduced to end.
+func ScaffoldIgnorePatterns() []string {
+	out := make([]string, 0, len(scaffoldRules))
+	for _, r := range scaffoldRules {
+		out = append(out, r.Pattern)
+	}
+	return out
+}
+
 func mustStayIgnored() []string {
 	var out []string
 	for _, r := range scaffoldRules {

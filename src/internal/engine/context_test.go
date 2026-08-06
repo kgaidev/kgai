@@ -2,6 +2,7 @@ package engine
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -241,5 +242,59 @@ func TestScaffoldFailureBlocksGitButNotObjectSync(t *testing.T) {
 		if refused != c.blocked {
 			t.Errorf("remote %q: refused=%v, want %v (err=%v)", c.remote, refused, c.blocked, err)
 		}
+	}
+}
+
+// Once a file is TRACKED, .gitignore no longer applies to it — so restoring the scaffold
+// does not undo a file an earlier sync committed, and a cache rewritten on every decision
+// would be pushed to the team forever. The transport untracks everything the scaffold
+// excludes, derived from the same rules, which is what the four-name hardcoded list
+// missed for graph.kuzu* and *.so.
+func TestSyncUntracksWhatTheScaffoldExcludes(t *testing.T) {
+	dir := t.TempDir() + "/store"
+	bare := t.TempDir() + "/team.git"
+	if out, err := exec.Command("git", "init", "-q", "--bare", bare).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v %s", err, out)
+	}
+	s, err := store.Init(dir, "test", bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(s).Ingest(IngestInput{Decisions: []DecisionInput{{
+		Title:     "something worth recording",
+		Mutations: []MutationInput{{Op: "upsert_element", Kind: "feature", Name: "Payments"}},
+	}}}, false); err != nil {
+		t.Fatal(err)
+	}
+	// Force-track the files the scaffold excludes, as a foreign .gitignore would have.
+	// graph.kuzu.wal and libkuzu.so are created; kg.config.json already exists and must
+	// not be overwritten — it is the live store config.
+	for _, name := range []string{"graph.kuzu.wal", "libkuzu.so"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"graph.kuzu.wal", "libkuzu.so", "kg.config.json"} {
+		add := exec.Command("git", "add", "-f", name)
+		add.Dir = dir
+		if out, err := add.CombinedOutput(); err != nil {
+			t.Fatalf("git add -f %s: %v %s", name, err, out)
+		}
+	}
+	if _, _, _, err := New(s).Sync(); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	ls := exec.Command("git", "--git-dir="+bare, "ls-tree", "-r", "--name-only", "main")
+	out, err := ls.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ls-tree: %v %s", err, out)
+	}
+	for _, name := range []string{"graph.kuzu.wal", "libkuzu.so", "kg.config.json"} {
+		if strings.Contains(string(out), name) {
+			t.Errorf("%s reached the team remote — the scaffold excludes it, so the transport must untrack it\n%s", name, out)
+		}
+	}
+	if !strings.Contains(string(out), ".ndjson") {
+		t.Errorf("the decision shard did not reach the remote:\n%s", out)
 	}
 }
