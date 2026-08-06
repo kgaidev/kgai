@@ -99,23 +99,25 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
 ### Fixed
 - **Sync cannot commit the cloud token, even when the store's ignore file is wrong.**
-  **Upgrading with a git remote: check for a leaked token.** Every version that could sync
-  to a git remote — v0.1.3, where that transport arrived, through v1.4.0 — could commit
-  `kg.config.json`, which holds the cloud token, when the store's own `.gitignore` was
-  wrong at sync time. What counts as "wrong", and how rare it is, depends
+  **Upgrading with a git remote: check for a leaked token.** Every version whose config
+  holds a cloud token — v0.1.4, where `cloud_token` was introduced, through v1.4.0 —
+  could commit `kg.config.json` when the store's own `.gitignore` was wrong at sync time. What counts as "wrong", and how rare it is, depends
   on the era:
 
-  - **v0.1.3–v1.1.0** — sync never rewrote that file, so ANY wrong ignore file leaked:
+  - **v0.1.4–v1.1.0** — sync never rewrote that file, so ANY wrong ignore file leaked:
     deleted, replaced, or mangled by a merge. No disk or permission problem needed. Both
-    variants reproduced on a build of v1.1.0, store directory fully writable.
+    variants reproduced on a build of v1.1.0 with the store directory fully writable, and
+    the missing-file variant independently on v1.0.0. The releases between share that code
+    path — no scaffold refresh anywhere in open or sync — but were not built individually.
   - **v1.2.0–v1.4.0** — sync rewrote the file every run, so a deleted or replaced one was
     restored before staging. Exposure required that rewrite to FAIL: an unwritable store
     directory (read-only mount, full disk, permissions), whose error was discarded.
     Reproduced on builds of v1.2.0 and of the v1.4.0 base: on both, a replaced or deleted
     ignore file is restored and nothing leaks; only the read-only store directory does.
-  - Before v0.1.3 there is no `internal/remote` package at all: no push path, and no local
-    commit either, since the only commit call lives in that transport. Nothing to leak,
-    and nothing tracked for a later upgrade to push.
+  - Before v0.1.4 there is no cloud token to leak. Those releases could already push (the
+    git path lived in `Store.PullPush` before it was extracted into `internal/remote`), so
+    a wrong ignore file could commit `kg.config.json` — but that file then held install
+    identity only, not a credential.
 
   Silent in every case: sync reported success. Check the team repository with
   `git log --all --name-only | grep kg.config.json`; if it appears, rotate the token —
