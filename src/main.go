@@ -468,6 +468,9 @@ func cmdRemote(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := rejectTrailingFlags("remote", fs.Args()); err != nil {
+		return err
+	}
 	url := fs.Arg(0)
 	if *unset && url != "" {
 		return fmt.Errorf("--unset takes no URL argument")
@@ -547,8 +550,14 @@ func cmdConfig(args []string) error {
 	case "", "show", "list":
 		return showConfig()
 	case "get":
+		if err := rejectTrailingFlags("config get", fs.Args()); err != nil {
+			return err
+		}
 		return getConfig(fs.Arg(0), *raw)
 	case "set", "unset":
+		if err := rejectTrailingFlags("config "+sub, fs.Args()); err != nil {
+			return err
+		}
 		key := fs.Arg(0)
 		if key == "" {
 			return fmt.Errorf("%s needs a key — one of: %s", sub, strings.Join(store.SettingKeys, ", "))
@@ -669,6 +678,20 @@ func cmdTrust(args []string) error {
 	out["fingerprint"] = fp
 	out["note"] = "approved for this machine; any later change to the file asks again"
 	emit(out)
+	return nil
+}
+
+// rejectTrailingFlags catches a flag written AFTER a positional argument. Go's flag
+// package stops parsing at the first non-flag word, so `kg config set remote --project
+// s3://x/y` silently stored the literal "--project" as the remote and dropped the URL,
+// and `kg remote s3://team/kg --global` wrote the session layer while reporting success.
+// Both looked like they had worked. A misplaced flag is a mistake, not a value.
+func rejectTrailingFlags(cmd string, args []string) error {
+	for _, a := range args {
+		if len(a) > 1 && strings.HasPrefix(a, "-") {
+			return fmt.Errorf("%q looks like a flag but came after an argument, where it would be stored as a value — flags go first: `kg %s %s …`", a, cmd, a)
+		}
+	}
 	return nil
 }
 
