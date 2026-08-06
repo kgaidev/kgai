@@ -99,9 +99,10 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
 ### Fixed
 - **Sync cannot commit the cloud token, even when the store's ignore file is wrong.**
-  **Upgrading with a git remote: check for a leaked token.** Every version through v1.4.0
-  could commit `kg.config.json` — which holds the cloud token — when the store's own
-  `.gitignore` was wrong at sync time. What counts as "wrong", and how rare it is, depends
+  **Upgrading with a git remote: check for a leaked token.** Every version that could sync
+  to a git remote — v0.1.3, where that transport arrived, through v1.4.0 — could commit
+  `kg.config.json`, which holds the cloud token, when the store's own `.gitignore` was
+  wrong at sync time. What counts as "wrong", and how rare it is, depends
   on the era:
 
   - **v0.1.3–v1.1.0** — sync never rewrote that file, so ANY wrong ignore file leaked:
@@ -112,7 +113,9 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
     directory (read-only mount, full disk, permissions), whose error was discarded.
     Reproduced on builds of v1.2.0 and of the v1.4.0 base: on both, a replaced or deleted
     ignore file is restored and nothing leaks; only the read-only store directory does.
-  - Before v0.1.3 there was no git transport, so nothing could be pushed.
+  - Before v0.1.3 there is no `internal/remote` package at all: no push path, and no local
+    commit either, since the only commit call lives in that transport. Nothing to leak,
+    and nothing tracked for a later upgrade to push.
 
   Silent in every case: sync reported success. Check the team repository with
   `git log --all --name-only | grep kg.config.json`; if it appears, rotate the token —
