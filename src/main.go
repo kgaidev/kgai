@@ -727,7 +727,7 @@ func cmdTrust(args []string) error {
 func rejectTrailingFlags(cmd string, args []string) error {
 	for _, a := range args {
 		if len(a) > 1 && strings.HasPrefix(a, "-") {
-			return fmt.Errorf("%q looks like a flag but came after an argument, where it would be stored as a value instead of taking effect — put flags before the arguments (`kg %s %s …`)", a, cmd, a)
+			return fmt.Errorf("%q looks like a flag but came after an argument, where it would be stored as a value instead of taking effect — put it before the arguments (`kg %s %s …`)", a, cmd, a)
 		}
 	}
 	return nil
@@ -749,7 +749,7 @@ func rejectFlagAsValue(cmd string, fs *flag.FlagSet, val string) error {
 		name = name[:i]
 	}
 	if known[name] {
-		return fmt.Errorf("%q is a flag of this command but was written where the value goes, so it would be stored as the value — put it before the key: `kg %s %s … <key>`", val, cmd, val)
+		return fmt.Errorf("%q is a flag of this command but was written where the value goes, so it would be stored as the value — put it before the arguments (`kg %s %s … <key>`)", val, cmd, val)
 	}
 	return nil
 }
