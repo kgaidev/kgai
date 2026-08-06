@@ -281,6 +281,15 @@ func TestSyncUntracksWhatTheScaffoldExcludes(t *testing.T) {
 			t.Fatalf("git add -f %s: %v %s", name, err, out)
 		}
 	}
+	// COMMIT them first: the case users are actually in is a store where an earlier sync
+	// already committed the file, not one where it merely sits staged. Ignore rules do
+	// not apply to tracked files, so only an explicit untrack removes it.
+	commit := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@e.com",
+		"commit", "-qm", "as an earlier sync would have")
+	commit.Dir = dir
+	if out, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v %s", err, out)
+	}
 	if _, _, _, err := New(s).Sync(); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
