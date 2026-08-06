@@ -4,7 +4,7 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
-## [Unreleased]
+## [1.5.0] - 2026-08-06
 
 ### Added
 - **Three-layer configuration, with a custom capture prompt as one of its keys.**
@@ -84,6 +84,31 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   supersession and conflicts are, the read-before/record-after flow, what belongs in the
   log and what does not, where files live, and the JSON output contract. An agent that
   runs `kg help` without the skill loaded now gets enough to use the tool correctly.
+- **127 tests for the installer, run on Linux, macOS and Git Bash — and on bash 3.2.**
+  `bash tests/run.sh`, and in CI on every push. Three suites, none of which touches the
+  network, the real `$HOME` or the real `/etc`:
+  - `tests/install-flow.sh` (31) — the whole script, run the way the SessionStart hook
+    runs it, installing from a fake release served over `file://`: a fresh install lands
+    the engine, the lib, the launcher and the PATH line and then `kg version` answers in a
+    new terminal; a checksum mismatch, a corrupted asset, an unreachable release and an
+    engine that will not execute are each refused and reported rather than announced as
+    ready; a plugin bump reinstalls; `curl | bash` works with no plugin root at all; the
+    macOS, Linux-arm and Windows/Git-Bash paths are exercised with a shadowed `uname`.
+  - `tests/install-path.sh` (68) — what counts as a profile mention, which file the line
+    goes into per shell and platform, telling our own leftovers (including a relative or
+    dangling symlink into `~/.kgai`) from a stranger's `kg`, that a stamped verdict does
+    not outlive the coverage that earned it, and end to end that a real shell resolves `kg`.
+  - `tests/install-rc-safety.sh` (28) — the profile is a file the user's shell executes:
+    that existing bytes are never modified, that the block is removable, that permissions
+    and symlinks into a dotfiles repo survive, that 16 hostile directory names stay inert,
+    and that concurrent sessions — even against a stale lock — write exactly one block.
+
+  A dedicated CI job runs all three under **bash 3.2**, the shell macOS ships, because its
+  `${var//…}` and here-doc behaviour differ from bash 5 in ways that had already broken the
+  quoting code and a whole suite silently. Every bug fixed below has a case that fails
+  without the fix — verified by reverting each fix in isolation and watching its test go
+  red. The engine's own `go test ./...` now runs in CI too, on every push rather than only
+  at a tag.
 
 ### Changed
 - **A flag written after a positional argument is now refused.** `kg remote
@@ -98,6 +123,119 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   out here rather than buried in the layering work that caused it.
 
 ### Fixed
+- **`kg` reaches your own terminal on the machines where v1.4.0 gave up.** v1.4.0 wrote
+  the launcher and the profile line, then decided whether they were needed from evidence
+  that could not answer the question — and got it wrong in four independent ways, each of
+  them silently, behind a status line that said `engine ready`:
+  - It asked **the hook process's own PATH**. That is Claude Code's environment, not your
+    Terminal's — and it already carries `~/.local/bin`, because that is where the Claude
+    Code CLI installs itself. The installer concluded there was nothing to do; a fresh
+    Terminal, which builds its PATH from the login files, still answered
+    `command not found: kg`.
+  - It also read the shell profile **as plain text**, so a **commented-out** mention of
+    `~/.local/bin` counted as "already on PATH". uv, pipx and pip all leave one behind
+    (`# WARNING: … is not on PATH` is pip's own wording), so the profile line was never
+    written and never would be — the same wrong conclusion was reached at every
+    subsequent session start.
+  - A mention that is real but never takes effect — inside a branch that does not fire, or
+    overwritten by a later `export PATH=…` — reads the same as a working one on paper.
+  - An **existing `kg` in `~/.local/bin` cancelled the PATH fix entirely**, because one
+    early `return` covered two unrelated decisions. Worse, "existing" included our own
+    leftovers: the symlink a pre-1.4.0 by-hand install leaves behind points at our engine,
+    but a search for the string `kgai launcher` inside a 14 MB binary does not match it, so
+    every upgraded machine was treated as having a stranger's tool and backed away from
+    permanently.
+
+  Now the question goes to the one place that can answer it: the login shell itself is run
+  and asked what PATH a real terminal ends up with (sentinel-delimited, timeout-capped,
+  and the confirmed verdict is cached so later sessions cost nothing). The file scan —
+  system PATH configuration plus the login shell's own profiles, matching `~/…`, `$HOME/…`
+  and the expanded spelling — remains as a cheap pre-filter and the fallback, and counts
+  only uncommented text. The launcher and the PATH entry are decided independently, and
+  our own symlinks and engine copies are recognised and replaced while a genuinely foreign
+  `kg` is still left alone.
+- **The PATH line is written as a quoted literal, so a directory name cannot become
+  code.** The line used to interpolate the directory bare into the user's shell profile.
+  A path containing a space produced two broken PATH entries — silently, under fish, where
+  a space is a list separator — and one containing a quote closed the installer's own
+  quote and turned the rest of the name into commands the shell then ran at every login;
+  both reproduced before the fix, the second confirmed by the injected command actually
+  executing. The path is now single-quoted with embedded quotes escaped, per shell dialect,
+  and a directory name containing a newline (which cannot be expressed on one line at all)
+  is refused rather than written as something else. The quoting is built one character at a
+  time on purpose: the obvious `${s//…}` form expands its backslashes differently on bash
+  3.2 — which is `/bin/bash` on every Mac — and there produced a *syntax error* that broke
+  the very login it was meant to protect; the character loop is byte-identical on 3.2 and
+  5.x. `$USER_BIN` comes from `$HOME` or `KGAI_USER_BIN`, so this is about not mangling odd
+  but legal directory names rather than a remote attacker — a login profile is the last
+  file in which to take that chance.
+- **Two sessions starting together no longer append two blocks.** This script runs at every
+  SessionStart, and nothing serialised the profile write: eight Claude Code windows opening
+  at once put eight copies of the same two lines in `.bashrc`, and nothing ever removed
+  them. The write now happens under a `mkdir` lock. Reclaiming a lock left behind by a
+  killed session is the subtle part — the naive "if it's stale, remove it and take it" lets
+  two sessions each rebuild and hold the lock (each judged staleness on the old lock but
+  acted on whatever sat there next), so both still appended; reproduced, then closed by
+  serialising the reclaimers through a separate break-lock so exactly one removes the stale
+  lock and everyone converges on the single atomic `mkdir` again. Losing the race is not a
+  failure — the winner is doing the same work. The launcher likewise writes through a
+  unique `mktemp` file, not a predictable one a racing session or a planted symlink could
+  interfere with.
+- **The installer recognises its own leftovers instead of backing off from them.** A
+  pre-1.4.0 by-hand install leaves `~/.local/bin/kg` as a *relative* symlink into `~/.kgai`
+  (`../../.kgai/bin/kg`). The check for "is this ours" compared that target against
+  `~/.kgai` without collapsing the `..`, so it never matched — the whole symlink branch was
+  dead, and every upgraded machine's own link was treated as a stranger's tool and refused
+  forever. The target is now canonicalised (a textual collapse that also works for a
+  dangling link, which `realpath -e` cannot and macOS has no portable flag for), which
+  additionally stops a crafted `~/.kgai/../outside` link from being misread as ours.
+- **A stamped "PATH is fine" verdict no longer outlives the line that earned it.** When
+  coverage came from an external line (a uv/pipx entry, the user's own `export`), the
+  installer recorded that it had confirmed reachability and skipped the probe on later
+  sessions. But it checked that record *before* re-scanning, so if the external line was
+  later removed, the installer short-circuited, never re-added the line, and reported
+  success while `kg` was once again unreachable — the very silent failure this release
+  exists to kill, reintroduced by the optimisation. The record now only ever skips the
+  probe *while the coverage is still present*, and is dropped the moment it is gone.
+- **Windows says "use WSL" instead of "install Go".** The Git-Bash refusal sat after the
+  Go and C-compiler checks and the native-lib fetch, so a real Windows user hit
+  "install Go (https://go.dev/dl)" or "github.com unreachable" — never the accurate message
+  — and the WSL text was dead code. The refusal now comes first, before any install
+  attempt.
+- **Executing the installer with `KGAI_INSTALL_LIB` set exits cleanly.** The test-only
+  library guard used a bare `return`, which errors when the script is run rather than
+  sourced; it now exits cleanly in both cases (no effect on the SessionStart hook, which
+  never sets the variable).
+- **The conflict count in the status line comes from the project, not from wherever the
+  hook started.** `kg conflicts` was the one engine call the installer made without first
+  entering the project root, so a session in one repository could be warned about another
+  repository's unresolved conflicts — observed while testing this release. It now runs in
+  the project root like the store check and the sync warning.
+- **"Ready" now means verified — twice.** The installer used to announce `engine ready`
+  for a binary it had never executed, so a Mac whose engine could not load
+  `libkuzu.dylib` — or was refused by the OS — looked healthy while every `kg` command
+  failed silently behind the hooks. Each install now runs `kg version` (the cheapest
+  command that still loads the native library) before saying it is ready: a prebuilt that
+  will not run falls back to a source build, and an engine that stops running between
+  sessions is reported loudly, once per session, with the one-line repair. And after
+  wiring PATH, the installer asks a real shell whether `kg` is actually reachable — when
+  it is not, the status line is a warning with the exact line to paste, and not being able
+  to check (an unusual shell, no `mktemp`) is reported as neither success nor failure.
+- **The profile line lands in the file your terminals read.** Two separate mistakes hid
+  here. The shell was taken from `$SHELL`, which is merely whatever started Claude Code —
+  on a Mac whose Terminal windows are zsh it is often `/bin/bash`, and the line went to
+  `.bash_profile`, which zsh never reads; the login shell now comes from the account
+  record (`dscl` on macOS, the passwd entry elsewhere), overridable with
+  `KGAI_LOGIN_SHELL`. And for bash the target was always `.bash_profile`, although a
+  login shell reads exactly one of `.bash_profile`, `.bash_login`, `.profile` — the first
+  that exists — so on a machine that had only `.profile`, creating `.bash_profile`
+  stopped `.profile` from being read at all. The line now goes to the file the shell
+  already reads (`.bashrc` on Linux, where a terminal window is not a login shell), and a
+  new one is created only when none exists.
+- **Windows says what it is instead of "unsupported platform".** Claude Code runs these
+  hooks through Git Bash, where `uname` reports `MINGW64_NT-…`; there is no native engine
+  for it, and the message now says so and points at WSL. Git Bash is also the third
+  platform the new test suite runs on, so the PATH logic stays correct there.
 - **Sync cannot commit the cloud token, even when the store's ignore file is wrong.**
   **Upgrading with a git remote: check for a leaked token.** Every version whose config
   holds a cloud token — v0.1.4, where `cloud_token` was introduced, through v1.4.0 —
@@ -144,28 +282,6 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   recording which decision shaped which element, so the canonical digest — the
   replay-determinism check — could not detect a divergence in the relationship the whole
   graph is built on.
-- **The `kg` launcher reaches your terminal's PATH on macOS.** v1.4.0 decided whether
-  `~/.local/bin` needed a profile line by looking at the PATH of the process running the
-  hook. That is Claude Code's environment, not your Terminal's: it already carries
-  `~/.local/bin` (that is where the Claude Code CLI installs itself), so the installer
-  concluded there was nothing to do and wrote no profile line — and a fresh Terminal, which
-  builds its PATH from the login files, still answered `command not found: kg`. The
-  question is now asked of the files that actually build a terminal's PATH — `/etc/paths`,
-  `/etc/paths.d`, the system profiles, and the login shell's own rc files — matching
-  `~/…` and `$HOME/…` as well as the expanded path, so nothing is written twice.
-- **The profile line lands in the file your terminals read.** The target file was chosen
-  from `$SHELL`, which is merely whatever shell started Claude Code — on a Mac whose
-  Terminal windows are zsh it is often `/bin/bash`, and the line went to `.bash_profile`,
-  which zsh never reads. The login shell now comes from the account record (`dscl` on
-  macOS, the passwd entry elsewhere), with `$SHELL` as the fallback.
-- **An engine that cannot run is no longer reported as ready.** The installer announced
-  "engine ready" for a binary it had never executed, so a Mac whose engine could not load
-  `libkuzu.dylib` — or was refused by the OS — looked healthy while every `kg` command
-  failed silently behind the hooks. Each install now runs `kg version` (the cheapest
-  command that still loads the native library) before saying it is ready: a prebuilt that
-  will not run falls back to a source build, and an engine that stops running is reported
-  loudly, once per session, with the one-line repair.
-
 ## [1.4.0] - 2026-08-04
 
 ### Fixed

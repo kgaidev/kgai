@@ -1,0 +1,86 @@
+name: tests
+
+# The installer is the one part of the plugin whose bugs are invisible on the machine that
+# writes it: every platform has a different login shell, a different profile file and a
+# different idea of what a terminal is. So the suites run everywhere, on every push —
+# including Windows, where the engine is not supported but Claude Code still executes
+# these hooks through Git Bash.
+#
+# The suites need no network: they install from a fake release served over file://.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            name: linux
+          - runner: macos-14
+            name: macos (bash 3.2, zsh login shell)
+          - runner: windows-latest
+            name: windows (git bash)
+    name: installer — ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Shell version
+        shell: bash
+        run: bash --version | head -n1
+      - name: The install itself
+        shell: bash
+        run: bash tests/install-flow.sh
+      - name: PATH wiring
+        shell: bash
+        run: bash tests/install-path.sh
+      - name: Shell-profile safety
+        shell: bash
+        run: bash tests/install-rc-safety.sh
+
+  # macOS ships bash 3.2, whose ${var//…} backslash handling and here-doc parsing differ
+  # from bash 4+/5 in ways that already broke both the quoting code and a whole suite. The
+  # macos-14 runner above covers 3.2, but only when it runs; this pins it on EVERY push,
+  # on Linux, via the exact 3.2 the Mac has. bash lives in /usr/local/bin in the image, so
+  # it is linked into /bin to match a real macOS/Linux layout where a fresh terminal's
+  # minimal PATH can resolve the launcher's `#!/usr/bin/env bash`.
+  bash32:
+    name: installer — bash 3.2 (macOS shell)
+    runs-on: ubuntu-latest
+    container: bash:3.2
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare (curl for file:// downloads, bash in /bin)
+        run: |
+          apk add --no-cache curl >/dev/null
+          ln -sf "$(command -v bash)" /bin/bash
+          bash --version | head -n1
+      - name: The install itself
+        run: bash tests/install-flow.sh
+      - name: PATH wiring
+        run: bash tests/install-path.sh
+      - name: Shell-profile safety
+        run: bash tests/install-rc-safety.sh
+
+  go:
+    name: engine unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'src/go.mod'
+          cache-dependency-path: src/go.sum
+      - name: Fetch native lib + binding
+        run: bash scripts/fetch-libs.sh
+      - name: go test
+        working-directory: src
+        env:
+          CGO_ENABLED: '1'
+          LD_LIBRARY_PATH: ${{ github.workspace }}/third_party/go-kuzu/lib/dynamic/linux-amd64
+        run: go test ./...

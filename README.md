@@ -75,7 +75,9 @@ The plugin sets itself up the first time you start a Claude Code session with it
 installing a plugin only downloads files, so nothing runs until then. Prebuilt engine
 binaries ship for **Linux** (x86_64, aarch64) and **macOS** (Apple Silicon + Intel), so you
 need neither Go nor a C compiler (the engine goes to `~/.kgai`; falls back to building from
-source if needed). Then just work normally — Claude reads and records decisions on its own.
+source if needed). On **Windows**, run Claude Code inside WSL — there is no native engine,
+and the installer says so rather than failing obscurely. Then just work normally — Claude
+reads and records decisions on its own.
 To record or query by hand:
 
 ```bash
@@ -85,8 +87,11 @@ To record or query by hand:
 ```
 
 The same setup also puts `kg` in `~/.local/bin`, so the CLI works in your own terminal and
-not only inside Claude Code. If that directory isn't on your `PATH`, the installer appends
-one marked line to your shell profile — open a new terminal and `kg version` answers.
+not only inside Claude Code. If that directory isn't on the `PATH` your terminal builds —
+which it confirms by asking your login shell, not just by grepping its profile — the
+installer appends one marked line to the profile that shell actually reads. Open a new terminal and
+`kg version` answers; if anything about that didn't work, the session's status line says so
+instead of reporting success.
 
 ### Install the CLI by hand
 
@@ -360,10 +365,24 @@ and a plugin has no post-install hook. The engine and the `kg` launcher are set 
 plugin's `SessionStart` hook, so they appear the first time you actually start a Claude
 Code session with the plugin enabled. Start one session, open a new terminal, and `kg`
 works from then on. To skip the wait — or to get the CLI on a machine that won't run
-Claude Code at all — use the [by-hand install](#install-the-cli-by-hand). If it is still
-missing after that, `~/.local/bin` isn't on your `PATH`: v1.4.0 could misjudge that on
-macOS and skip the profile line, which the next release repairs at the next session start.
-Adding `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` yourself does the same thing.
+Claude Code at all — use the [by-hand install](#install-the-cli-by-hand).
+
+If it's still missing after that, you're on **v1.4.0**, which decided whether
+`~/.local/bin` was already on your `PATH` from evidence that couldn't answer it: its own
+process environment (which carries that directory even when your terminal doesn't) and a
+plain-text read of your shell profile, where a commented-out mention (uv, pipx and pip
+all leave one behind) counted as "already handled" — as did an existing `kg` in that
+directory, including the symlink an older by-hand install of *ours* leaves there. In
+every case v1.4.0 skipped the profile line and still reported `engine ready`, and it
+reached the same wrong conclusion at every session start, so it never repaired itself.
+Later versions ask a real shell instead, recognise their own leftovers, and warn instead
+of claiming success — update the plugin (`claude plugin update kgai@kgai-marketplace`)
+and start a session, and the line is written. To do it yourself, add this to the profile your terminal actually reads
+(`~/.zshrc` for zsh, `~/.bash_profile` for bash on macOS, `~/.bashrc` for bash on Linux):
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
 **The plugin updated, but my engine didn't.**
 It does now: the installer compares a fingerprint that includes the plugin version, so a
