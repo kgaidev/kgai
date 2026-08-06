@@ -362,8 +362,8 @@ Code session with the plugin enabled. Start one session, open a new terminal, an
 works from then on. To skip the wait — or to get the CLI on a machine that won't run
 Claude Code at all — use the [by-hand install](#install-the-cli-by-hand). If it is still
 missing after that, `~/.local/bin` isn't on your `PATH`: v1.4.0 could misjudge that on
-macOS and skip the profile line, which v1.4.1 fixes at the next session start. Adding
-`export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` yourself does the same thing.
+macOS and skip the profile line, which the next release repairs at the next session start.
+Adding `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` yourself does the same thing.
 
 **The plugin updated, but my engine didn't.**
 It does now: the installer compares a fingerprint that includes the plugin version, so a

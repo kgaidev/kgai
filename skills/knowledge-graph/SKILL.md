@@ -140,8 +140,9 @@ How it behaves:
   to ANY kind of element the team decides about — a feature, a service, a business
   object — not just code.
 - **DON'T:** behavior-preserving refactors; code-level renames (files, functions,
-  variables) that change no element's name or boundary; formatting; pure implementation
-  details with no effect on how elements relate; **analyses, research findings, cost or
+  variables) that change no element's name or boundary; formatting; bug fixes that
+  restore intended behavior; pure implementation details with no effect on how elements
+  relate; **analyses, research findings, cost or
   status reports, and recommendations nobody has acted on** — however important. If a
   real choice came out of the analysis, record THE CHOICE (element + mutations + a
   2–3 sentence why), not the analysis itself; volatile figures (prices, counts,
