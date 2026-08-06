@@ -164,12 +164,14 @@ or not you approved:
   segments, not the directory.
   If an earlier sync already committed something the scaffold excludes, a **git** sync
   untracks it on the next run — you do not have to. Two caveats worth knowing: it is
-  removed from the repository's current tree, not from its history, so anything already
-  pushed stays in the commits that carried it (a cloud token that reached a remote must be
-  rotated, not just untracked); and an **S3** store never commits the directory at all, so
-  nothing untracks a file that a previous git remote left tracked — harmless, since
-  nothing is pushed from that directory either, but it stays in the local repo until you
-  run `git rm --cached` there yourself.
+  removed from the repository's current tree, not from its history, so what an earlier
+  sync pushed stays in the commits that carried it — in practice the graph cache and
+  possibly the native library, since the config has been excluded by the transport for as
+  long as the exclusion has existed. If a config ever did reach a remote, untracking does
+  not remove it from the history and the cloud token in it must be rotated. And an **S3**
+  store never commits the directory at all, so nothing untracks a file a previous git
+  remote left tracked — harmless, since nothing is pushed from there either, but it stays
+  in the local repo until you run `git rm --cached` in it yourself.
 - **The store never overwrites files it did not write.** Its scaffold (`.gitignore`,
   `.gitattributes`) refuses to replace a file without kgai's own marker.
 - **A broken or conflicted `.kgairc` stops the command** instead of quietly resolving to
