@@ -154,6 +154,14 @@ or not you approved:
   - a directory that already holds someone else's files
   - symlinks are resolved *before* these checks, so a link cannot point the checks at one
     directory while writes land in another
+- **The store's own `.gitignore` is machinery, not a preference.** With a git remote it
+  decides what `kg sync` sends, and `log/` is deliberately absent from it: the decision
+  shards are the payload. kgai maintains that file — a line you add is kept, unless it
+  would stop the shards syncing (`log/`, `*.ndjson`) or switch off one of the rules that
+  keeps the install-local config and the derived graph out of the team's repo
+  (`!kg.config.json`, `!graph.kuzu`). Those are dropped at the next sync, along with any
+  conflict markers a merge left behind. S3 remotes never read it: they upload event
+  segments, not the directory.
 - **The store never overwrites files it did not write.** Its scaffold (`.gitignore`,
   `.gitattributes`) refuses to replace a file without kgai's own marker.
 - **A broken or conflicted `.kgairc` stops the command** instead of quietly resolving to

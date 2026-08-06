@@ -336,7 +336,7 @@ func (s *Store) EnsureScaffold() error { return s.ensureGitScaffold() }
 // `store` used to point at a real project and this function then replaced that project's
 // .gitignore, which is data loss in someone's working tree. The store owns its root or
 // it writes nothing.
-func writeOwnFile(path, content, marker string) error {
+func writeOwnFile(path, content, marker string, shared []string) error {
 	if b, err := os.ReadFile(path); err == nil {
 		if !bytes.Contains(b, []byte(marker)) {
 			return fmt.Errorf("refusing to overwrite %s: it was not written by kgai (the store must own its directory — check the `store` setting)", path)
@@ -344,7 +344,7 @@ func writeOwnFile(path, content, marker string) error {
 		// Keep lines someone added. This file is ours, but rewriting it wholesale
 		// silently deleted a rule a person put there on purpose — the same "quietly
 		// discards someone's work" the refusal above exists to prevent, one branch over.
-		content = mergeLines(string(b), content)
+		content = mergeLines(string(b), content, shared)
 		if string(b) == content {
 			return nil
 		}
@@ -367,7 +367,7 @@ func writeOwnFile(path, content, marker string) error {
 // the machine, forever, and .gitignore being tracked spread the line to the whole team),
 // and git conflict markers (the file is shared, so a conflicted merge is ordinary — and
 // keeping the markers meant it never recovered).
-func mergeLines(existing, want string) string {
+func mergeLines(existing, want string, shared []string) string {
 	have := map[string]bool{}
 	for _, l := range strings.Split(want, "\n") {
 		have[strings.TrimSpace(l)] = true
@@ -375,10 +375,10 @@ func mergeLines(existing, want string) string {
 	out := strings.TrimRight(want, "\n") + "\n"
 	for _, l := range strings.Split(existing, "\n") {
 		t := strings.TrimSpace(l)
-		if t == "" || have[t] || t[0] == '#' && have[t] {
+		if t == "" || have[t] {
 			continue
 		}
-		if isConflictMarker(t) || breaksScaffold(t) {
+		if isConflictMarker(t) || breaksScaffold(t, shared) {
 			continue
 		}
 		have[t] = true
@@ -391,26 +391,78 @@ func isConflictMarker(line string) bool {
 	return strings.HasPrefix(line, "<<<<<<<") || strings.HasPrefix(line, ">>>>>>>") || line == "======="
 }
 
-// mustStayIgnored / mustStayShared are the outcome mergeLines protects. Representative
-// paths, not patterns: a candidate line is judged by what it would DO to them.
-var (
-	mustStayIgnored = []string{"kg.config.json", ".kg.lock", "last-autosync.json", ".autosync-stamp", "graph.kuzu"}
-	mustStayShared  = []string{"log/i0123456789abcdef.ndjson"}
-)
+// scaffoldRules is the single source for BOTH the store's .gitignore and the outcome
+// mergeLines protects. Each rule carries the paths it exists to cover, so the guard
+// cannot drift from the file: a rule added here without a representative fails
+// TestScaffoldRulesAllHaveRepresentatives rather than shipping unprotected. Two gaps
+// found in review came from exactly that drift — "*.so" had no representative at all, so
+// "!libkuzu.so" was kept and the native library was pushed to the team remote, and the
+// representative for "graph.kuzu*" was the bare name, so "!graph.kuzu.wal" slipped past.
+var scaffoldRules = []struct {
+	Pattern string
+	Covers  []string
+}{
+	{"graph.kuzu*", []string{"graph.kuzu", "graph.kuzu.wal", "graph.kuzu.shadow"}},
+	{"*.so", []string{"libkuzu.so"}},
+	{".kg.lock", []string{".kg.lock"}},
+	{"kg.config.json", []string{"kg.config.json"}},
+	{".autosync-stamp", []string{".autosync-stamp"}},
+	{"last-autosync.json", []string{"last-autosync.json"}},
+}
+
+// mustStayShared is the other half of the outcome: the decision shards ARE the sync
+// payload, so nothing carried over may cause them to be ignored. The synthetic name
+// covers the patterns a person actually types (log/, *.ndjson, i*); the REAL shard names
+// are added from disk by shardRepresentatives, because a pattern built from this install's
+// own id — "ib7b4a*" — matches nothing else and would otherwise be kept.
+var mustStayShared = []string{"log/i0123456789abcdef.ndjson"}
+
+// shardRepresentatives is mustStayShared plus every shard currently in the store.
+func shardRepresentatives(root string) []string {
+	out := append([]string{}, mustStayShared...)
+	entries, err := os.ReadDir(filepath.Join(root, "log"))
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".ndjson") {
+			out = append(out, filepath.Join("log", e.Name()))
+		}
+	}
+	return out
+}
+
+// scaffoldIgnoreFile is the .gitignore the store owns, built from the rules above.
+func scaffoldIgnoreFile() string {
+	var b strings.Builder
+	for _, r := range scaffoldRules {
+		b.WriteString(r.Pattern)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func mustStayIgnored() []string {
+	var out []string
+	for _, r := range scaffoldRules {
+		out = append(out, r.Covers...)
+	}
+	return out
+}
 
 // breaksScaffold reports whether a carried-over .gitignore line would un-ignore something
 // that must never be committed, or ignore the decision shards that must be.
-func breaksScaffold(line string) bool {
+func breaksScaffold(line string, shared []string) bool {
 	pattern, negated := strings.TrimPrefix(line, "!"), strings.HasPrefix(line, "!")
 	if negated {
-		for _, p := range mustStayIgnored {
+		for _, p := range mustStayIgnored() {
 			if globMatches(pattern, p) {
 				return true
 			}
 		}
 		return false
 	}
-	for _, p := range mustStayShared {
+	for _, p := range shared {
 		if globMatches(pattern, p) {
 			return true
 		}
@@ -457,13 +509,14 @@ func (s *Store) ensureGitScaffold() error {
 	// clones would conflict on it during merge).
 	// graph.kuzu may be a file or a directory depending on engine version; match
 	// both plus its wal/shadow files. *.so = downloaded native libs.
-	gi := "graph.kuzu*\n*.so\n.kg.lock\nkg.config.json\n.autosync-stamp\nlast-autosync.json\n"
-	if err := writeOwnFile(filepath.Join(s.Root, ".gitignore"), gi, "graph.kuzu"); err != nil {
+	gi := scaffoldIgnoreFile()
+	shared := shardRepresentatives(s.Root)
+	if err := writeOwnFile(filepath.Join(s.Root, ".gitignore"), gi, "graph.kuzu", shared); err != nil {
 		return err
 	}
 	// union merge driver for ndjson as a safety net (shards are per-install anyway).
 	ga := "*.ndjson merge=union\n"
-	if err := writeOwnFile(filepath.Join(s.Root, ".gitattributes"), ga, "*.ndjson merge=union"); err != nil {
+	if err := writeOwnFile(filepath.Join(s.Root, ".gitattributes"), ga, "*.ndjson merge=union", shared); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(s.Root, ".git")); errors.Is(err, os.ErrNotExist) {

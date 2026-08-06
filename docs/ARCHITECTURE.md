@@ -144,6 +144,7 @@ store-wide `flock` so concurrent sessions never corrupt the single-writer cache.
 | `scripts/` | `fetch-libs.sh` (native lib), `install.sh` (idempotent engine install) |
 | `bin/kg` | PATH shim for Claude Code's Bash tool → stable `~/.kgai` engine |
 | `~/.local/bin/kg` | launcher written by `install.sh` → same engine, for the user's own terminal |
+| `<store>/.gitignore` | machinery: with a git remote it decides what sync sends. kgai keeps it correct — added lines survive, ones that would break sync or expose the config are dropped |
 | `<repo>/.kgairc` | committed project layer of the config (capture rules, store) — untrusted until approved, see [CONFIGURATION.md](CONFIGURATION.md) |
 | `~/.kgai/trusted.json` | configurations approved on this machine (per user, never synced) |
 | `hooks/inject-prompt.sh` | SessionStart → gives the model the effective `prompt` setting |

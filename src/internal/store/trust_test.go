@@ -229,7 +229,7 @@ func TestScaffoldRefusesToOverwriteForeignFiles(t *testing.T) {
 	if err := os.WriteFile(gi, []byte("node_modules/\ndist/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeOwnFile(gi, "graph.kuzu*\n", "graph.kuzu"); err == nil {
+	if err := writeOwnFile(gi, "graph.kuzu*\n", "graph.kuzu", mustStayShared); err == nil {
 		t.Error("writing over a .gitignore kgai did not write must be refused")
 	}
 	if b, _ := os.ReadFile(gi); string(b) != "node_modules/\ndist/\n" {
@@ -240,7 +240,7 @@ func TestScaffoldRefusesToOverwriteForeignFiles(t *testing.T) {
 	if err := os.WriteFile(ours, []byte("graph.kuzu*\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeOwnFile(ours, "graph.kuzu*\n*.so\n", "graph.kuzu"); err != nil {
+	if err := writeOwnFile(ours, "graph.kuzu*\n*.so\n", "graph.kuzu", mustStayShared); err != nil {
 		t.Errorf("rewriting our own scaffold must work: %v", err)
 	}
 }
@@ -441,7 +441,7 @@ func TestScaffoldKeepsLinesSomeoneAdded(t *testing.T) {
 	if err := os.WriteFile(gi, []byte("graph.kuzu*\n*.so\nmy-team-notes.md\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeOwnFile(gi, "graph.kuzu*\n*.so\n.kg.lock\n", "graph.kuzu"); err != nil {
+	if err := writeOwnFile(gi, "graph.kuzu*\n*.so\n.kg.lock\n", "graph.kuzu", mustStayShared); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(gi)
@@ -482,7 +482,7 @@ func TestScaffoldKeepsOnlyLinesThatLeaveTheOutcomeIntact(t *testing.T) {
 		if err := os.WriteFile(gi, []byte(canonical+c.added+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeOwnFile(gi, canonical, "graph.kuzu"); err != nil {
+		if err := writeOwnFile(gi, canonical, "graph.kuzu", mustStayShared); err != nil {
 			t.Fatal(err)
 		}
 		b, _ := os.ReadFile(gi)
@@ -509,7 +509,7 @@ func TestScaffoldDropsNegationsAndConflictMarkers(t *testing.T) {
 	if err := os.WriteFile(gi, []byte(canonical+"!kg.config.json\nteam-notes.md\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeOwnFile(gi, canonical, "graph.kuzu"); err != nil {
+	if err := writeOwnFile(gi, canonical, "graph.kuzu", mustStayShared); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(gi)
@@ -524,7 +524,7 @@ func TestScaffoldDropsNegationsAndConflictMarkers(t *testing.T) {
 	if err := os.WriteFile(gi, []byte(conflicted), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeOwnFile(gi, canonical, "graph.kuzu"); err != nil {
+	if err := writeOwnFile(gi, canonical, "graph.kuzu", mustStayShared); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = os.ReadFile(gi)
@@ -532,5 +532,55 @@ func TestScaffoldDropsNegationsAndConflictMarkers(t *testing.T) {
 		if strings.Contains(string(got), marker) {
 			t.Errorf("conflict marker %q survived, so the file never recovers: %q", marker, got)
 		}
+	}
+}
+
+// The guard and the file it guards must not drift apart. Every rule the store writes into
+// its .gitignore needs at least one path it demonstrably covers, or a rule added later
+// ships with nothing enforcing it — which is how "!libkuzu.so" and "!graph.kuzu.wal"
+// survived a merge that was supposed to refuse them.
+func TestScaffoldRulesAllHaveRepresentatives(t *testing.T) {
+	for _, r := range scaffoldRules {
+		if len(r.Covers) == 0 {
+			t.Errorf("rule %q has no representative path, so nothing stops a line negating it", r.Pattern)
+			continue
+		}
+		for _, c := range r.Covers {
+			if !globMatches(r.Pattern, c) {
+				t.Errorf("rule %q does not actually cover %q — the representative is wrong", r.Pattern, c)
+			}
+			if !breaksScaffold("!"+c, mustStayShared) {
+				t.Errorf("a negation of %q is not refused, so %q can be switched off", c, r.Pattern)
+			}
+		}
+	}
+	// And the file the store writes is the same list, so neither can be edited alone.
+	for _, r := range scaffoldRules {
+		if !strings.Contains(scaffoldIgnoreFile(), r.Pattern+"\n") {
+			t.Errorf("rule %q is not in the .gitignore the store writes", r.Pattern)
+		}
+	}
+}
+
+// The shard representatives must include the shards actually on disk. A pattern built
+// from this install's own id — "ib7b4a*" — matches no synthetic example, so a check
+// against examples alone would keep it and the sync payload would stop leaving, silently.
+func TestRealShardNamesAreProtected(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "log"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shard := "ib7b4a6de081e4d20.ndjson"
+	if err := os.WriteFile(filepath.Join(root, "log", shard), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shared := shardRepresentatives(root)
+	for _, pattern := range []string{"ib7b4a*", "log/ib7b4a6de081e4d20.ndjson", "ib7b4a6de081e4d20.ndjson"} {
+		if !breaksScaffold(pattern, shared) {
+			t.Errorf("%q would stop this store's shard syncing but was not refused", pattern)
+		}
+	}
+	if breaksScaffold("team-notes.md", shared) {
+		t.Error("a harmless line must still be kept")
 	}
 }
