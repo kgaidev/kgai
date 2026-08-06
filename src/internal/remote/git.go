@@ -61,6 +61,14 @@ func (g *gitRemote) commit(s *store.Store, msg string) error {
 	if _, err := git(s.Root, "add", "-A"); err != nil {
 		return err
 	}
+	// Belt and braces on top of .gitignore: unstage the install-local files whatever the
+	// ignore rules say. kg.config.json carries the cloud token, and a store whose ignore
+	// file was replaced or mangled by a merge would otherwise commit it to a repo the
+	// whole team pulls. --ignore-unmatch makes this a no-op when they are absent.
+	if _, err := git(s.Root, "rm", "--cached", "-q", "--ignore-unmatch", "--",
+		"kg.config.json", ".kg.lock", "last-autosync.json", ".autosync-stamp"); err != nil {
+		return err
+	}
 	if out, _ := git(s.Root, "status", "--porcelain"); strings.TrimSpace(out) == "" {
 		return nil // nothing staged
 	}

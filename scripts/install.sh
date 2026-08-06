@@ -267,6 +267,25 @@ engine_works() {
   return 1
 }
 
+# Background auto-sync runs silently; a persistent failure surfaces once per session
+# instead of nagging on every turn. Soft failures (expired SSO, offline) report ok:true
+# with a detail, so check for either.
+#
+# ASK the engine where the store is. Guessing <project>/.kgai/store means the warning
+# never fires for a store the `store` setting or KGAI_STORE moved — the multi-repo setup
+# where a silent sync failure costs the most.
+autosync_warning() {
+  local lastsync root
+  root="$( cd "$(project_root)" && KGAI_HOME="$KGAI_HOME" \
+      LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
+      DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" config 2>/dev/null |
+      sed -n 's/.*"store_root": *"\([^"]*\)".*/\1/p' )"
+  lastsync="${root:-$(project_root)/.kgai/store}/last-autosync.json"
+  if [ -f "$lastsync" ] && grep -qE '"ok": *false|"detail":' "$lastsync" 2>/dev/null; then
+    printf '%s' "⚠ background team sync did not sync on its last attempt — tell the user to run \`kg sync\` to see why. "
+  fi
+}
+
 report_ready() {
   ensure_on_path
   ensure_store
@@ -278,22 +297,7 @@ report_ready() {
   if [ -n "$conf" ] && [ "$conf" != "0" ]; then
     extra="${extra}⚠ $conf unresolved decision conflict(s) — run /kgai:kg-conflicts. "
   fi
-  # Background auto-sync runs silently; a persistent failure surfaces here, once
-  # per session, instead of nagging on every turn. Soft failures (expired SSO,
-  # offline) report ok:true with a detail, so check for either.
-  #
-  # ASK the engine where the store is. Guessing <project>/.kgai/store means the warning
-  # never fires for a store the `store` setting or KGAI_STORE moved — which is exactly
-  # the multi-repo setup where a silent sync failure costs the most.
-  local lastsync root
-  root="$( cd "$(project_root)" && KGAI_HOME="$KGAI_HOME" \
-      LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
-      DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" config 2>/dev/null |
-      sed -n 's/.*"store_root": *"\([^"]*\)".*/\1/p' )"
-  lastsync="${root:-$(project_root)/.kgai/store}/last-autosync.json"
-  if [ -f "$lastsync" ] && grep -qE '"ok": *false|"detail":' "$lastsync" 2>/dev/null; then
-    extra="${extra}⚠ background team sync did not sync on its last attempt — tell the user to run \`kg sync\` to see why. "
-  fi
+  extra="${extra}$(autosync_warning)"
   status "engine ready ($1). ${extra}Use /kgai:kg-ask before non-trivial changes; /kgai:kg-decision to record decisions."
 }
 
@@ -314,7 +318,12 @@ if [ -x "$BIN" ] && [ "$WANT" = "$HAVE" ]; then
   fi
   ensure_on_path
   ensure_store
-  [ -n "$PATH_NOTE" ] && status "$PATH_NOTE"
+  # The sync warning has to live here too: this is the path a normal session takes (the
+  # engine is current), and report_ready — where it used to live alone — is only reached
+  # by a session that installs or updates the engine. So the one thing it exists to tell
+  # you was told approximately never.
+  note="$PATH_NOTE$(autosync_warning)"
+  [ -n "$note" ] && status "$note"
   exit 0
 fi
 

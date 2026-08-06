@@ -92,6 +92,14 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   out here rather than buried in the layering work that caused it.
 
 ### Fixed
+- **Sync cannot commit the cloud token, even when the store's ignore file is wrong.** The
+  store's `.gitignore` is what keeps `kg.config.json` out of what sync commits, and this
+  release taught the scaffold to refuse overwriting a `.gitignore` kgai did not write —
+  but sync discarded that error and pushed anyway, so a store whose ignore file had been
+  replaced or mangled by a merge would commit the token to the repository the whole team
+  pulls. Sync now fails with the reason instead, and the git transport additionally
+  unstages `kg.config.json` (and the lock/stamp files) after `add -A`, so the token is
+  never staged whatever the ignore rules say.
 - **Changing a setting takes the store's write lock.** `kg config set` (and the older
   `kg remote <url>`) rewrote the whole config file from what the process had loaded, with
   no lock and no re-read. Racing an identity rotation restored the old `install_id` and
