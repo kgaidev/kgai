@@ -507,7 +507,7 @@ func (e *Engine) syncLocked() (remote.SyncResult, int, []ConflictGroup, error) {
 	}
 	scaffoldErr := e.S.EnsureScaffold()
 	if scaffoldErr != nil && remote.CommitsStoreDirectory(r) {
-		return remote.SyncResult{Remote: url}, 0, nil, fmt.Errorf("refusing to sync: %w — this transport commits the store directory, and its ignore rules are part of what keeps kg.config.json (your cloud token) out of what is sent; kgai will not sync a store whose scaffold it no longer controls. Restore or delete that file and run sync again. If an earlier sync already committed files the scaffold excludes — the graph cache, the config — untracking them is a separate step (`git rm --cached` in the store): git applies ignore rules only to files it does not already track", scaffoldErr)
+		return remote.SyncResult{Remote: url}, 0, nil, fmt.Errorf("refusing to sync: %w — this transport commits the store directory, and its ignore rules are part of what keeps kg.config.json (your cloud token) out of what its git history records; kgai will not sync a store whose scaffold it no longer controls. Restore or delete that file and run sync again", scaffoldErr)
 	}
 	before, err := e.S.ShardCounts()
 	if err != nil {
