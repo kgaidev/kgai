@@ -118,19 +118,30 @@ else, enroll repositories one at a time.
 ## Moving an existing project into the shared store
 
 The setting only changes where the engine looks; it does not move data. A project that
-already recorded decisions keeps them in `<project>/.kgai/store`, and after the switch
-its agent sees the shared graph instead. To carry the history over, export the old log
-and re-ingest it into the shared store:
+already recorded decisions keeps them in `<project>/.kgai/store`, and after the switch its
+agent sees the shared graph instead — the old decisions are still on disk, just invisible
+from here. Carry them over by copying the log itself and replaying it:
 
 ```bash
 cd your-project
-kg export --canonical > /tmp/old-log.json    # from the old store, before switching
-kg config set --project store /opt/kgai      # switch this repo over
-# then replay the decisions into the shared store (see `kg ingest`; give each its real date)
+kg config                                  # note the current store_root — call it OLD
+kg config set --project store /opt/kgai    # switch this repo over
+kg trust                                   # approve what you just committed to the repo
+kg init                                    # create the shared store if it is new
+cp "$OLD"/log/*.ndjson /opt/kgai/log/      # the log itself: one file per install, no collisions
+kg rebuild                                 # replay the copied shards into the graph
 ```
 
-Keep the old store directory until you have verified the shared graph answers the
-questions you care about — nothing deletes it for you.
+Verified end to end: the rationale, the author and the original decision date all survive,
+because the `.ndjson` shards *are* the immutable log — everything else in a store is
+derived from them.
+
+Do **not** try this with `kg export`: it dumps the current graph (element and decision
+ids, titles), not the log — no rationale, no author, no dates — and its output is not
+valid `kg ingest` input. It is a verification tool, not a migration one.
+
+Keep the old store directory until you have asked the shared graph the questions you care
+about — nothing deletes it for you.
 
 ## Going back
 
