@@ -84,6 +84,13 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   log and what does not, where files live, and the JSON output contract. An agent that
   runs `kg help` without the skill loaded now gets enough to use the tool correctly.
 
+### Changed
+- **`remote_source` and `kg remote` report layer names.** `kg status` now answers
+  `session | global | disabled` where it used to answer `local | global | disabled`, and
+  `kg remote`'s output carries `session`/`project`/`global` instead of a single `local`
+  key. Both are part of the stable JSON agents and scripts read, so the rename is called
+  out here rather than buried in the layering work that caused it.
+
 ### Fixed
 - **The `kg` launcher reaches your terminal's PATH on macOS.** v1.4.0 decided whether
   `~/.local/bin` needed a profile line by looking at the PATH of the process running the

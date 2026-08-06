@@ -306,15 +306,17 @@ project that has no remote of its own:
 
 ```bash
 kg remote --global "s3://your-bucket/kg/{project}"   # {project} → the project dir's name
-kg remote                                            # show local, global and effective
-kg remote none                                       # opt THIS project out of the global
+kg remote                                            # show every layer and the effective value
+kg remote none                                       # opt THIS store out of the global default
 kg remote --unset                                    # back to the global default
 ```
 
-A project's own remote always wins over the global one. Without the `{project}`
-placeholder the global value is used verbatim, meaning every project syncs into one
-shared graph — do that only on purpose. `kg status` shows which remote is in effect and
-where it came from (`remote_source: local | global | disabled`).
+A store's own remote always wins over the global one — and a committed `.kgairc` cannot
+set it at all, because syncing belongs to the store rather than to one repository (see
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md)). Without the `{project}` placeholder the
+global value is used verbatim, meaning every project syncs into one shared graph — do
+that only on purpose. `kg status` shows which remote is in effect and where it came from
+(`remote_source: session | global | disabled`).
 
 **Once a remote is configured, syncing is automatic.** A plugin hook fires `kg sync
 --auto` in the background at session start and after every turn — detached, so nobody

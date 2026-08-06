@@ -625,10 +625,11 @@ type StatusReport struct {
 	Machine       string `json:"machine,omitempty"`
 	SchemaVersion int    `json:"schema_version"`
 
-	// Sync / remote configuration. Remote is the EFFECTIVE remote (the store's own,
-	// or the global default from <KGAI_HOME>/config.json); RemoteSource says which.
+	// Sync / remote configuration. Remote is the EFFECTIVE remote (this store's own,
+	// or the machine-wide default in <KGAI_HOME>/config.json); RemoteSource names the
+	// layer it came from. A committed .kgairc cannot set it — see store/settings.go.
 	Remote           string `json:"remote,omitempty"`        // redacted (credentials stripped)
-	RemoteSource     string `json:"remote_source,omitempty"` // local | global | disabled
+	RemoteSource     string `json:"remote_source,omitempty"` // session | global | disabled
 	RemoteConfigured bool   `json:"remote_configured"`
 	SyncTransport    string `json:"sync_transport"` // none | s3 | kgai-cloud | git
 	CloudConfigured  bool   `json:"cloud_configured"`
