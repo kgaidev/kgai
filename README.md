@@ -184,7 +184,7 @@ the way `git config` and npm do it:
 
 | Layer | File | Who it is for |
 |---|---|---|
-| **session** | `<project>/.kgai/store/kg.config.json` | this install; never committed (holds the cloud token) |
+| **session** | `<store>/kg.config.json` | this install; never committed (holds the cloud token) |
 | **project** | `<repo>/.kgairc` | **committed** — the repo's default for everyone who clones it |
 | **global** | `~/.kgai/config.json` | this machine; written only when you ask for it |
 
@@ -215,7 +215,7 @@ kg remote s3://team/kg                      # sync target for this store
 
 **A committed `.kgairc` decides nothing until you approve it.** It is the one layer you
 did not write — it arrives with `git clone`, from whoever made that repository — so kgai
-ignores it until you say otherwise, and asks again whenever its content changes (a
+ignores it until you say otherwise, and asks again whenever what it asks for changes (a
 teammate's commit, a `git pull`).
 
 You approve it **in the session**: Claude shows you the store path and the capture rules

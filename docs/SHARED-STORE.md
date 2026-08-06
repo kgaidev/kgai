@@ -129,9 +129,9 @@ from here. Carry them over by copying the log itself and replaying it:
 
 ```bash
 cd your-project
-kg config                                  # note the current store_root — call it OLD
+OLD=$(kg config | sed -n 's/.*"store_root": *"\([^"]*\)".*/\1/p')   # where it is now
 kg config set --project store /opt/kgai    # switch this repo over
-kg trust                                   # approve what you just committed to the repo
+kg trust                                   # approve the config you just changed
 kg init                                    # create the shared store if it is new
 cp "$OLD"/log/*.ndjson /opt/kgai/log/      # the log itself: one file per install, no collisions
 kg rebuild                                 # replay the copied shards into the graph

@@ -575,7 +575,13 @@ func cmdConfig(args []string) error {
 		}
 		return getConfig(fs.Arg(0), *raw, scoped)
 	case "set", "unset":
-		if err := rejectTrailingFlags("config "+sub, fs.Args()); err != nil {
+		// Only the key position and anything beyond the value: a VALUE may legitimately
+		// start with "-" (a capture rule written as a bullet list is the normal case).
+		check := fs.Args()
+		if sub == "set" && len(check) > 1 {
+			check = append([]string{check[0]}, check[2:]...)
+		}
+		if err := rejectTrailingFlags("config "+sub, check); err != nil {
 			return err
 		}
 		key := fs.Arg(0)
@@ -718,7 +724,7 @@ func cmdTrust(args []string) error {
 func rejectTrailingFlags(cmd string, args []string) error {
 	for _, a := range args {
 		if len(a) > 1 && strings.HasPrefix(a, "-") {
-			return fmt.Errorf("%q looks like a flag but came after an argument, where it would be stored as a value — flags go first: `kg %s %s …`", a, cmd, a)
+			return fmt.Errorf("%q looks like a flag but came after an argument, where it would be stored as a value instead of taking effect — put flags before the arguments (`kg %s %s …`)", a, cmd, a)
 		}
 	}
 	return nil
@@ -922,14 +928,9 @@ func writeConfig(scope, key, val string) error {
 		if key == "remote" && val == store.RemoteNone {
 			return fmt.Errorf("%q opts a project out of a remote inherited from a broader layer; the global layer has nothing above it — use `kg config unset --global remote`", store.RemoteNone)
 		}
-		gc, err := store.LoadGlobalConfig()
-		if err != nil {
-			return err
-		}
-		if err := gc.Set(key, val); err != nil {
-			return err
-		}
-		return store.SaveGlobalConfig(gc)
+		// Through WriteLayer, so the machine-wide file keeps any key this version does
+		// not know — the same reason the project layer goes through it.
+		return store.WriteLayer(scope, store.GlobalConfigPath(), key, val)
 	}
 	return fmt.Errorf("unknown layer %q", scope)
 }
@@ -1111,7 +1112,8 @@ ADMIN
                experimental (untested). --auto is the background mode the
                plugin hooks fire: silent no-op without a store/remote, honors
                a cooldown, never blocks on the store lock
-  config [show|get|set|unset] [--session|--project|--global] [--raw] [KEY] [VALUE|-]
+  config [show|get|set|unset] [--session|--project|--global] [--raw]
+         [--from-file F] [KEY] [VALUE|-]
                layered configuration, most specific first:
                  session  <store>/kg.config.json   this install (default scope)
                  project  <repo>/.kgairc           committed — the repo's default
@@ -1122,16 +1124,16 @@ ADMIN
                cloud_url (session only, beside the token it authenticates with).
                No args shows every layer, each effective value and its source.
                "get KEY" answers with the effective value; "get --project KEY"
-               answers with what THAT layer holds — what a clone of this repo inherits.
+               answers with what THAT layer holds — what a clone inherits once approved.
                VALUE of "-" reads stdin; --from-file F reads a file
   trust [--show|--revoke|--list]
                approve this repo's committed .kgairc. It arrives with a clone, from
                whoever wrote that repository, so it decides NOTHING until approved,
                and any later change to it asks again. --show prints what it asks for
-               without approving. NEVER run the approving form on your own initiative:
-               it is the user's decision, so report and let them run it
+               without approving. NEVER approve on your own initiative — show the
+               user what it asks for and run "kg trust" only after they say yes
   prompt       shorthand for "config get prompt" (--raw for the text alone)
-  remote [URL] [--session|--project|--global] [--unset]
+  remote [--session|--global] [--unset] [URL]
                show or set the sync remote — the same key through a narrower
                view. No args: every layer plus the effective value. {project}
                expands to the project dir name; value "none" in a non-global
@@ -1147,7 +1149,8 @@ WHERE THINGS LIVE
   <project>/.kgai/store   the decision log (own git cycle; the "store" setting or
                           KGAI_STORE moves it — several repos can share one graph)
   <repo>/.kgairc          committed project config: the repo's defaults for everyone
-  ~/.kgai                 the engine, its native lib, and this machine's config.json
+  ~/.kgai                 the engine, its native lib, this machine's config.json,
+                          and trusted.json (the configs approved here)
   Store location, remote, capture prompt and cloud URL resolve in three layers,
   most specific first: session > project > global ("kg config" shows all of them).
 

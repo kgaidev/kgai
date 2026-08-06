@@ -27,7 +27,8 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   the store pointed at `$HOME`, their `.ssh` and `.env`) to a remote the repo's author
   chose, then pulled that author's fabricated "team decisions" back into the log where
   `kg search` returns them as genuine history. Now: the file decides nothing until
-  `kg trust`, the approval is bound to its content so any later commit asks again,
+  `kg trust`, the approval is bound to what the file asks for so a later commit that
+  changes it asks again,
   `kg trust --show` prints what it asks for, and a pending file is reported by
   `kg config`, `kg prompt` and the session hook rather than silently ignored. Approving
   happens in the session — Claude shows the store path and the rules and waits for an
@@ -85,6 +86,11 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   runs `kg help` without the skill loaded now gets enough to use the tool correctly.
 
 ### Changed
+- **A flag written after a positional argument is now refused.** `kg remote
+  s3://bucket/kg --global` and `kg config set remote --project s3://x/y` used to be
+  accepted, silently storing the flag as the value or writing the wrong layer while
+  reporting success. Flags go first: `kg remote --global <url>`. This changes the
+  contract of `kg remote`, which has been in every release.
 - **`remote_source` and `kg remote` report layer names.** `kg status` now answers
   `session | global | disabled` where it used to answer `local | global | disabled`, and
   `kg remote`'s output carries `session`/`project`/`global` instead of a single `local`

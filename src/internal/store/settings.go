@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Settings are the configuration keys that LAYER. The same shape is read from three
@@ -395,6 +397,9 @@ func LoadLayers(s *Store) ([]Layer, error) {
 	if global.Exists {
 		global.Unknown = unknownKeysIn(global.Path)
 	}
+	session.Settings.Prompt = capPrompt(session.Settings.Prompt)
+	project.Settings.Prompt = capPrompt(project.Settings.Prompt)
+	global.Settings.Prompt = capPrompt(global.Settings.Prompt)
 	// The session layer holds `store` only in a hand-edited or legacy file, where it
 	// could never take effect (that file lives inside the store). Blank it so the
 	// resolver and `kg config` cannot disagree about which layer decided.
@@ -440,6 +445,21 @@ func readSettings(path string, into *Settings, exists *bool) error {
 	}
 	*exists = true
 	return nil
+}
+
+// capPrompt truncates a prompt to PromptMaxBytes on a UTF-8 boundary. The write path
+// refuses an oversized value, but .kgairc is committed and hand-edited, so the read path
+// is where the cost is actually paid — the prompt is injected into every session in the
+// repo, and a hand-written file never passes through Set.
+func capPrompt(p string) string {
+	if len(p) <= PromptMaxBytes {
+		return p
+	}
+	cut := PromptMaxBytes
+	for cut > 0 && !utf8.ValidString(p[:cut]) {
+		cut--
+	}
+	return p[:cut] + "\n[truncated at " + strconv.Itoa(PromptMaxBytes) + " bytes — keep capture rules short and link out for detail]"
 }
 
 // Effective resolves one key across the layers and names the layer it came from. An

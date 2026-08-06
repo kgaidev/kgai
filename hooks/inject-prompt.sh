@@ -26,7 +26,7 @@ if [ -n "$pending" ]; then
   cat <<EOF
 kgai: this repository's config ($pending) has not been approved on this machine, so it
 decides nothing — its capture rules were NOT loaded and any store location it asks for is
-ignored. Nothing is blocked; the project's own store is in use.
+ignored. Nothing is blocked; the store this machine already resolves to is in use.
 
 Handle this in the conversation, not by sending the user to a terminal: when it is
 relevant (they ask about kgai, or you are about to record a decision), run
@@ -67,8 +67,11 @@ fi
 # block, next to the instructions — which is exactly how untrusted text escapes framing.
 # A tag the file cannot predict removes that. The boundary is also restated AFTER the
 # data, where the most recently read text has the most weight.
-tag="kgai-rules-$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
-tag="${tag:-kgai-rules-$$}"
+nonce="$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+# Default the NONCE, not the whole tag: "kgai-rules-$nonce" is never empty, so defaulting
+# the tag was dead code and the delimiter would quietly degrade to a fixed, guessable
+# fence on a machine without /dev/urandom.
+tag="kgai-rules-${nonce:-$$-$(date +%s 2>/dev/null)}"
 case "$prompt" in *"$tag"*) prompt="[rules removed: they contained this session's delimiter]" ;; esac
 
 cat <<EOF

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -383,5 +384,50 @@ func TestTypoedKeyIsReported(t *testing.T) {
 	}
 	if len(layers[1].Unknown) != 1 || layers[1].Unknown[0] != "stor" {
 		t.Errorf("unknown keys = %v, want [stor] — a typo must be visible, and _note must not be", layers[1].Unknown)
+	}
+}
+
+// The cap exists because the prompt is injected into every session. `kg config set`
+// refuses an oversized value, but .kgairc is committed and hand-written, so the read path
+// is the one that actually protects the context.
+func TestOversizedPromptIsCappedOnRead(t *testing.T) {
+	big := strings.Repeat("x", PromptMaxBytes*3)
+	repoAt(t, `{"prompt":"`+big+`"}`)
+	if _, err := Trust(ProjectConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	layers, err := LoadLayers(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	val, _ := Effective(layers, "prompt")
+	if len(val) > PromptMaxBytes+120 {
+		t.Errorf("prompt is %d bytes after reading a hand-written file, want it capped near %d", len(val), PromptMaxBytes)
+	}
+	if !strings.Contains(val, "truncated") {
+		t.Error("a truncated prompt must say so, or the rules look complete when they are not")
+	}
+}
+
+// SettingKeys and keyLayers are two lists of the same thing, walked by different code:
+// the fingerprint and the blanking loop use one, validation and unknown-key reporting the
+// other. A key in only one of them would be outside the approval fingerprint while still
+// taking effect — approval given for something the user never saw.
+func TestSettingKeysAndLayerRulesAgree(t *testing.T) {
+	for _, k := range SettingKeys {
+		if _, ok := keyLayers[k]; !ok {
+			t.Errorf("%q is in SettingKeys but has no layer rule", k)
+		}
+	}
+	for k := range keyLayers {
+		found := false
+		for _, s := range SettingKeys {
+			if s == k {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q has a layer rule but is not in SettingKeys — it would escape the approval fingerprint", k)
+		}
 	}
 }

@@ -61,7 +61,7 @@ scheme picks the transport:
 |---|---|
 | `s3://bucket/prefix` | S3 (supported) |
 | a git URL | git (experimental) |
-| `kgai://org/project` | kgai cloud (not yet available) |
+| `kgai://org/project` | kgai cloud (closed beta) |
 
 `cloud_url` is the **address of the server** for that last transport — `kgai://org/project`
 names the project, not the broker hosting it — and it travels with `cloud_token`. For S3
@@ -86,7 +86,7 @@ the rules the file asks for as quoted content from the repository, and waits for
 answer. `/kgai:kg-trust` starts that on demand. The agent must never approve on its own
 initiative — that is the entire point of the step.
 
-By hand it is the same three commands:
+By hand it is the same flow:
 
 ```bash
 kg trust --show    # what this repo's config asks for; approves nothing

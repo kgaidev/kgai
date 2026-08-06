@@ -19,6 +19,10 @@ const RemoteNone = "none"
 
 func globalConfigPath() string { return filepath.Join(KgaiHome(), "config.json") }
 
+// GlobalConfigPath is the machine-wide layer's file, exported so writes can go through
+// WriteLayer — which merges into what the file already holds instead of replacing it.
+func GlobalConfigPath() string { return globalConfigPath() }
+
 // LoadGlobalConfig reads <KgaiHome>/config.json. A missing file is an empty config.
 func LoadGlobalConfig() (Settings, error) {
 	var gc Settings

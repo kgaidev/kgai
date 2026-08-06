@@ -212,7 +212,13 @@ func saveTrust(m map[string]TrustRecord) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(trustPath(), append(b, '\n'), 0o600)
+	// Temp + rename: a half-written trusted.json fails to parse, and every command reads
+	// it — a crash mid-write would take out the whole CLI until someone deleted the file.
+	tmp := trustPath() + ".new"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, trustPath())
 }
 
 func absOrSelf(p string) string {
