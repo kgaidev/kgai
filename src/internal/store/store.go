@@ -336,6 +336,10 @@ func (s *Store) EnsureScaffold() error { return s.ensureGitScaffold() }
 // `store` used to point at a real project and this function then replaced that project's
 // .gitignore, which is data loss in someone's working tree. The store owns its root or
 // it writes nothing.
+// shared == nil means "this file is not a .gitignore": conflict markers are still
+// dropped (a merge leaves them in any file), but the ignore-outcome check is not applied.
+// .gitattributes has a different grammar — "pattern attr=value" — where a bare *.ndjson
+// line is the merge driver, not an attempt to stop the shards syncing.
 func writeOwnFile(path, content, marker string, shared []string) error {
 	if b, err := os.ReadFile(path); err == nil {
 		if !bytes.Contains(b, []byte(marker)) {
@@ -378,7 +382,7 @@ func mergeLines(existing, want string, shared []string) string {
 		if t == "" || have[t] {
 			continue
 		}
-		if isConflictMarker(t) || breaksScaffold(t, shared) {
+		if isConflictMarker(t) || (shared != nil && breaksScaffold(t, shared)) {
 			continue
 		}
 		have[t] = true
@@ -516,7 +520,7 @@ func (s *Store) ensureGitScaffold() error {
 	}
 	// union merge driver for ndjson as a safety net (shards are per-install anyway).
 	ga := "*.ndjson merge=union\n"
-	if err := writeOwnFile(filepath.Join(s.Root, ".gitattributes"), ga, "*.ndjson merge=union", shared); err != nil {
+	if err := writeOwnFile(filepath.Join(s.Root, ".gitattributes"), ga, "*.ndjson merge=union", nil); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(s.Root, ".git")); errors.Is(err, os.ErrNotExist) {

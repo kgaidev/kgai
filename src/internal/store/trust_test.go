@@ -584,3 +584,21 @@ func TestRealShardNamesAreProtected(t *testing.T) {
 		t.Error("a harmless line must still be kept")
 	}
 }
+
+// .gitattributes is not a .gitignore: "*.ndjson merge=union" is its own canonical line
+// and a custom attribute rule is not an attempt to stop the shards syncing. The ignore
+// outcome check must not be applied to a file with a different grammar.
+func TestGitattributesKeepsItsOwnGrammar(t *testing.T) {
+	dir := t.TempDir()
+	ga := filepath.Join(dir, ".gitattributes")
+	if err := os.WriteFile(ga, []byte("*.ndjson merge=union\n*.ndjson text eol=lf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOwnFile(ga, "*.ndjson merge=union\n", "*.ndjson merge=union", nil); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(ga)
+	if !strings.Contains(string(b), "text eol=lf") {
+		t.Errorf("an attribute rule was dropped as if it were an ignore pattern: %q", b)
+	}
+}
