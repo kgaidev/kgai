@@ -915,10 +915,7 @@ func writeConfig(scope, key, val string) error {
 			// Writing configuration is deliberate — creating the store is intended.
 			return err
 		}
-		if err := e.S.Config.Settings.Set(key, val); err != nil {
-			return err
-		}
-		return e.S.SaveConfig()
+		return e.S.UpdateConfig(func(c *store.Config) error { return c.Settings.Set(key, val) })
 	case store.LayerProject:
 		return store.WriteLayer(scope, store.ProjectConfigPath(), key, val)
 	case store.LayerGlobal:

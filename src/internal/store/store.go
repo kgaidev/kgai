@@ -300,7 +300,31 @@ func (s *Store) saveConfig() error {
 }
 
 // SaveConfig persists config changes made after Init (e.g. cloud credentials).
+//
+// Prefer UpdateConfig for anything that changes one setting: this writes the WHOLE
+// config from whatever this process loaded, so a concurrent rotation between Open and
+// here would be overwritten with the stale identity.
 func (s *Store) SaveConfig() error { return s.saveConfig() }
+
+// UpdateConfig changes settings under the store's write lock. Lock() re-reads the config
+// from disk and re-applies the machine binding, so mutate() always sees the current
+// identity and the write cannot revert a rotation that happened in between.
+//
+// Without it, `kg config set` was a read-modify-write of the entire file with no lock:
+// racing a rotation restored the old installId and dropped retired_installs, leaving the
+// rotated shard neither current nor retired — so sync never reconciled it and its
+// decisions never reached the team, while `kg doctor` still reported a healthy store
+// (the local replay reads every shard regardless).
+func (s *Store) UpdateConfig(mutate func(c *Config) error) error {
+	if err := s.Lock(); err != nil {
+		return err
+	}
+	defer s.Unlock()
+	if err := mutate(&s.Config); err != nil {
+		return err
+	}
+	return s.saveConfig()
+}
 
 // EnsureScaffold re-writes the store's .gitignore/.gitattributes. Sync calls it so
 // stores created by older engines pick up newly ignored files (e.g. the auto-sync

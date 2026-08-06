@@ -92,6 +92,14 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   out here rather than buried in the layering work that caused it.
 
 ### Fixed
+- **Changing a setting takes the store's write lock.** `kg config set` (and the older
+  `kg remote <url>`) rewrote the whole config file from what the process had loaded, with
+  no lock and no re-read. Racing an identity rotation restored the old `install_id` and
+  dropped `retired_installs`, leaving the rotated shard neither current nor retired: sync
+  never reconciled it, its decisions never reached the team, and `kg doctor` still
+  reported a healthy store because the local replay reads every shard regardless. Writes
+  now go through the same locked path as the rest of the engine, which re-reads the
+  config and re-applies the machine binding first.
 - **`kg export` carries the decision→element edges again.** The `shapes` query aliased
   `d.id AS d` over its own node variable, so Kuzu refused the ORDER BY and the query
   failed silently: every export said `"shapes": null`. That is the part of the dump
