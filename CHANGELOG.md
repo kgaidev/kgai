@@ -108,14 +108,11 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   `git log --all --name-only | grep kg.config.json`; if it appears, rotate the token —
   untracking does not remove it from history. A second route, through a *replaced*
   ignore file, was introduced and fixed inside this cycle and never shipped: released
-  versions overwrote such a file before staging. The
-  store's `.gitignore` is what keeps `kg.config.json` out of what sync commits, and this
-  release taught the scaffold to refuse overwriting a `.gitignore` kgai did not write —
-  but sync discarded that error and pushed anyway, so a store whose ignore file had been
-  replaced or mangled by a merge would commit the token to the repository the whole team
-  pulls. Sync now fails with the reason instead, and the git transport additionally
-  unstages `kg.config.json` (and the lock/stamp files) after `add -A`, so the token is
-  never staged whatever the ignore rules say.
+  versions overwrote such a file before staging, and this release stopped doing that (it
+  refuses to overwrite a `.gitignore` kgai did not write) while sync still discarded the
+  error. Both are closed now: sync fails with the reason rather than proceeding, and the
+  git transport unstages `kg.config.json` and everything else the scaffold excludes after
+  `add -A`, so the token is never staged whatever the ignore rules say.
 - **Changing a setting takes the store's write lock.** `kg config set` (and the older
   `kg remote <url>`) rewrote the whole config file from what the process had loaded, with
   no lock and no re-read. Racing an identity rotation restored the old `install_id` and
