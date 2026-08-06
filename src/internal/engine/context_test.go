@@ -209,26 +209,33 @@ func TestExportIncludesShapes(t *testing.T) {
 	}
 }
 
-// The scaffold guard has tests; the CALLER did not — which is the shape that let the
-// original leak ship green. sync must refuse when the store's ignore rules cannot be
-// guaranteed, because those rules are what keep kg.config.json (the cloud token) out of
-// what the git transport commits.
-func TestSyncRefusesWhenTheIgnoreRulesCannotBeGuaranteed(t *testing.T) {
-	dir := t.TempDir() + "/store"
-	s, err := store.Init(dir, "test", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A .gitignore kgai did not write: the scaffold refuses to replace it, so nothing
-	// guarantees the token is excluded any more.
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("node_modules/\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, _, _, err = New(s).Sync()
-	if err == nil {
-		t.Fatal("sync proceeded with unguaranteed ignore rules — that is how the cloud token reaches a shared remote")
-	}
-	if !strings.Contains(err.Error(), "refusing to sync") {
-		t.Errorf("error = %v, want it to name the refusal and the reason", err)
+// Two things at once, because they failed together before: the CALLER must act on the
+// scaffold guard's error — the guard had tests and the caller did not, which is how the
+// token leak shipped green — and the refusal must be scoped to the transport that can
+// actually leak. The object
+// transport builds its payload from shard events and never reads the store directory, so
+// blocking an S3 team over a .gitignore is stopping a supported setup for a file that
+// cannot affect it — while a git remote must still refuse.
+func TestScaffoldFailureBlocksGitButNotObjectSync(t *testing.T) {
+	for _, c := range []struct {
+		remote  string
+		blocked bool
+	}{
+		{"/tmp/some-team-repo.git", true},
+		{"s3://team-bucket/kg", false},
+	} {
+		dir := t.TempDir() + "/store"
+		s, err := store.Init(dir, "test", c.remote)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("node_modules/\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, err = New(s).Sync()
+		refused := err != nil && strings.Contains(err.Error(), "refusing to sync")
+		if refused != c.blocked {
+			t.Errorf("remote %q: refused=%v, want %v (err=%v)", c.remote, refused, c.blocked, err)
+		}
 	}
 }

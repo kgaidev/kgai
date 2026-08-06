@@ -492,14 +492,19 @@ func (e *Engine) SyncAuto(cooldown time.Duration) (ran bool, sr remote.SyncResul
 }
 
 func (e *Engine) syncLocked() (remote.SyncResult, int, []ConflictGroup, error) {
-	// The scaffold is what keeps kg.config.json — which holds the cloud token — out of
-	// what sync commits. Its error must NOT be discarded: it fails exactly when the
-	// store's .gitignore was replaced by a file kgai did not write, which is the one
-	// case where syncing anyway would push the token to the team remote.
-	if err := e.S.EnsureScaffold(); err != nil {
-		return remote.SyncResult{}, 0, nil, fmt.Errorf("refusing to sync: %w — kgai will not sync a store whose scaffold it no longer controls; with a git remote those ignore rules are part of what keeps kg.config.json (your cloud token) out of the commit. Restore or delete that file and run sync again", err)
-	}
 	url, _ := e.S.EffectiveRemote()
+	// The scaffold's ignore rules are what keep kg.config.json — which holds the cloud
+	// token — out of what a GIT sync commits, so its error must not be discarded there:
+	// it fails exactly when the store's .gitignore was replaced by a file kgai did not
+	// write, the one case where syncing anyway pushes the token to the team remote.
+	//
+	// Other transports never read the store directory — the object transport builds its
+	// payload from the shard's events — so refusing there would block a supported setup
+	// over a file that cannot affect it. Report it and carry on.
+	scaffoldErr := e.S.EnsureScaffold()
+	if scaffoldErr != nil && syncTransport(url) == "git" {
+		return remote.SyncResult{Remote: url}, 0, nil, fmt.Errorf("refusing to sync: %w — with a git remote the store's ignore rules are part of what keeps kg.config.json (your cloud token) out of the commit, and kgai will not sync a store whose scaffold it no longer controls. Restore or delete that file and run sync again", scaffoldErr)
+	}
 	r, err := remote.For(url)
 	if err != nil {
 		return remote.SyncResult{Remote: url}, 0, nil, err
@@ -524,6 +529,11 @@ func (e *Engine) syncLocked() (remote.SyncResult, int, []ConflictGroup, error) {
 		return sr, n, nil, err
 	}
 	conf, err := e.conflictsLocked()
+	if scaffoldErr != nil {
+		// Harmless for this transport, but still a store kgai no longer fully controls —
+		// and it would block a switch to a git remote.
+		sr.Detail = strings.TrimSpace(sr.Detail + " " + scaffoldErr.Error())
+	}
 	return sr, n, conf, err
 }
 
