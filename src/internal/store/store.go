@@ -341,11 +341,34 @@ func writeOwnFile(path, content, marker string) error {
 		if !bytes.Contains(b, []byte(marker)) {
 			return fmt.Errorf("refusing to overwrite %s: it was not written by kgai (the store must own its directory — check the `store` setting)", path)
 		}
+		// Keep lines someone added. This file is ours, but rewriting it wholesale
+		// silently deleted a rule a person put there on purpose — the same "quietly
+		// discards someone's work" the refusal above exists to prevent, one branch over.
+		content = mergeLines(string(b), content)
 		if string(b) == content {
 			return nil
 		}
 	}
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+// mergeLines returns want plus any line existing holds that want does not, in the order
+// they were added.
+func mergeLines(existing, want string) string {
+	have := map[string]bool{}
+	for _, l := range strings.Split(want, "\n") {
+		have[strings.TrimSpace(l)] = true
+	}
+	out := strings.TrimRight(want, "\n") + "\n"
+	for _, l := range strings.Split(existing, "\n") {
+		t := strings.TrimSpace(l)
+		if t == "" || have[t] {
+			continue
+		}
+		have[t] = true
+		out += l + "\n"
+	}
+	return out
 }
 
 func (s *Store) ensureGitScaffold() error {

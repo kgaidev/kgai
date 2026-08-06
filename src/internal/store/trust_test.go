@@ -431,3 +431,25 @@ func TestSettingKeysAndLayerRulesAgree(t *testing.T) {
 		}
 	}
 }
+
+// The store owns its .gitignore, but a rule someone added on purpose must survive the
+// next scaffold write. Deleting it silently is the same failure as clobbering a foreign
+// file, one branch over in the same function.
+func TestScaffoldKeepsLinesSomeoneAdded(t *testing.T) {
+	dir := t.TempDir()
+	gi := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(gi, []byte("graph.kuzu*\n*.so\nmy-team-notes.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOwnFile(gi, "graph.kuzu*\n*.so\n.kg.lock\n", "graph.kuzu"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(gi)
+	got := string(b)
+	if !strings.Contains(got, "my-team-notes.md") {
+		t.Errorf("the added rule was deleted: %q", got)
+	}
+	if !strings.Contains(got, ".kg.lock") {
+		t.Errorf("the new scaffold rule is missing: %q", got)
+	}
+}
