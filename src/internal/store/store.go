@@ -352,8 +352,21 @@ func writeOwnFile(path, content, marker string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-// mergeLines returns want plus any line existing holds that want does not, in the order
-// they were added.
+// mergeLines returns want plus any line existing holds that want does not — but only
+// lines that leave the outcome intact. The scaffold exists to guarantee two things about
+// the store directory, and a carried-over line that flips either is dropped:
+//
+//	MUST stay ignored    kg.config.json (the cloud token), the lock, the sync stamps,
+//	                     the derived graph — none belong in a repo the team pulls
+//	MUST stay committed  log/*.ndjson — the decision shards ARE the sync
+//
+// Asserting the outcome rather than trusting the input is what makes this testable, and
+// it covers three failures that each shipped separately: a "!kg.config.json" negation
+// (gitignore takes the last match, so the token stopped being ignored), a "log/" line
+// typed from muscle memory (sync then reported pushed:true while no decision ever left
+// the machine, forever, and .gitignore being tracked spread the line to the whole team),
+// and git conflict markers (the file is shared, so a conflicted merge is ordinary — and
+// keeping the markers meant it never recovered).
 func mergeLines(existing, want string) string {
 	have := map[string]bool{}
 	for _, l := range strings.Split(want, "\n") {
@@ -362,13 +375,80 @@ func mergeLines(existing, want string) string {
 	out := strings.TrimRight(want, "\n") + "\n"
 	for _, l := range strings.Split(existing, "\n") {
 		t := strings.TrimSpace(l)
-		if t == "" || have[t] {
+		if t == "" || have[t] || t[0] == '#' && have[t] {
+			continue
+		}
+		if isConflictMarker(t) || breaksScaffold(t) {
 			continue
 		}
 		have[t] = true
 		out += l + "\n"
 	}
 	return out
+}
+
+func isConflictMarker(line string) bool {
+	return strings.HasPrefix(line, "<<<<<<<") || strings.HasPrefix(line, ">>>>>>>") || line == "======="
+}
+
+// mustStayIgnored / mustStayShared are the outcome mergeLines protects. Representative
+// paths, not patterns: a candidate line is judged by what it would DO to them.
+var (
+	mustStayIgnored = []string{"kg.config.json", ".kg.lock", "last-autosync.json", ".autosync-stamp", "graph.kuzu"}
+	mustStayShared  = []string{"log/i0123456789abcdef.ndjson"}
+)
+
+// breaksScaffold reports whether a carried-over .gitignore line would un-ignore something
+// that must never be committed, or ignore the decision shards that must be.
+func breaksScaffold(line string) bool {
+	pattern, negated := strings.TrimPrefix(line, "!"), strings.HasPrefix(line, "!")
+	if negated {
+		for _, p := range mustStayIgnored {
+			if globMatches(pattern, p) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range mustStayShared {
+		if globMatches(pattern, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// globMatches is a deliberately generous reading of one gitignore pattern against one
+// path: leading/trailing slashes stripped, matched against the whole path, each of its
+// directory prefixes, and its base name. Being generous is the safe direction — the cost
+// of a false positive is one dropped line in a file kgai owns, the cost of a false
+// negative is a silent leak or a sync that never syncs.
+func globMatches(pattern, path string) bool {
+	pattern = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(pattern), "/"), "/")
+	if pattern == "" {
+		return false
+	}
+	if pattern == "*" || pattern == "**" {
+		return true
+	}
+	candidates := []string{path, filepath.Base(path)}
+	for dir := filepath.Dir(path); dir != "." && dir != string(filepath.Separator); dir = filepath.Dir(dir) {
+		candidates = append(candidates, dir)
+	}
+	for _, c := range candidates {
+		if pattern == c {
+			return true
+		}
+		if ok, err := filepath.Match(pattern, c); err == nil && ok {
+			return true
+		}
+		// "log/**" and "log/*" style prefixes.
+		if strings.HasPrefix(c, strings.TrimSuffix(strings.TrimSuffix(pattern, "**"), "*")) &&
+			strings.ContainsAny(pattern, "*") && strings.Contains(pattern, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) ensureGitScaffold() error {

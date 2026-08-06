@@ -497,7 +497,7 @@ func (e *Engine) syncLocked() (remote.SyncResult, int, []ConflictGroup, error) {
 	// store's .gitignore was replaced by a file kgai did not write, which is the one
 	// case where syncing anyway would push the token to the team remote.
 	if err := e.S.EnsureScaffold(); err != nil {
-		return remote.SyncResult{}, 0, nil, fmt.Errorf("refusing to sync: %w — the store's ignore rules are what keep kg.config.json (your cloud token) out of the sync; restore or delete that file and run sync again", err)
+		return remote.SyncResult{}, 0, nil, fmt.Errorf("refusing to sync: %w — kgai will not sync a store whose scaffold it no longer controls; with a git remote those ignore rules are part of what keeps kg.config.json (your cloud token) out of the commit. Restore or delete that file and run sync again", err)
 	}
 	url, _ := e.S.EffectiveRemote()
 	r, err := remote.For(url)

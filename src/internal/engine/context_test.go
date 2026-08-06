@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"kgai/internal/store"
@@ -203,5 +206,29 @@ func TestExportIncludesShapes(t *testing.T) {
 	}
 	if out.Digest == "" {
 		t.Error("canonical export must carry a digest")
+	}
+}
+
+// The scaffold guard has tests; the CALLER did not — which is the shape that let the
+// original leak ship green. sync must refuse when the store's ignore rules cannot be
+// guaranteed, because those rules are what keep kg.config.json (the cloud token) out of
+// what the git transport commits.
+func TestSyncRefusesWhenTheIgnoreRulesCannotBeGuaranteed(t *testing.T) {
+	dir := t.TempDir() + "/store"
+	s, err := store.Init(dir, "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A .gitignore kgai did not write: the scaffold refuses to replace it, so nothing
+	// guarantees the token is excluded any more.
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("node_modules/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err = New(s).Sync()
+	if err == nil {
+		t.Fatal("sync proceeded with unguaranteed ignore rules — that is how the cloud token reaches a shared remote")
+	}
+	if !strings.Contains(err.Error(), "refusing to sync") {
+		t.Errorf("error = %v, want it to name the refusal and the reason", err)
 	}
 }

@@ -360,9 +360,12 @@ func LoadLayers(s *Store) ([]Layer, error) {
 	session := Layer{Name: LayerSession}
 	if s != nil {
 		session.Path, session.Exists, session.Settings = s.configPath(), true, s.Config.Settings
-	} else {
-		session.Path = filepath.Join(DefaultRoot(), "kg.config.json")
+	} else if root, err := ResolveRoot(); err == nil {
+		session.Path = filepath.Join(root, "kg.config.json")
 	}
+	// When the store cannot be resolved at all, the session layer has no path to report.
+	// DefaultRoot() would answer with the per-project default — a file that is not where
+	// the session config lives — inside the command whose job is to diagnose that.
 
 	project := Layer{Name: LayerProject, Path: ProjectConfigPath()}
 	var onFile Settings

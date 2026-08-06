@@ -453,3 +453,84 @@ func TestScaffoldKeepsLinesSomeoneAdded(t *testing.T) {
 		t.Errorf("the new scaffold rule is missing: %q", got)
 	}
 }
+
+// Two lines must never survive the scaffold merge, because both defeat the file's whole
+// purpose: a negation of one of our own rules (gitignore takes the last match, so it
+// un-ignores the config holding the cloud token) and git conflict markers (the file is
+// tracked and shared, so a conflicted merge is ordinary — and a merge that kept the
+// markers would re-merge and re-push them forever).
+// The scaffold guarantees two outcomes about the store directory. A line someone adds is
+// kept only if it leaves both intact — asserted here as behaviour, because each of these
+// three shipped separately and the last one disabled team sync while reporting success.
+func TestScaffoldKeepsOnlyLinesThatLeaveTheOutcomeIntact(t *testing.T) {
+	canonical := "graph.kuzu*\n*.so\n.kg.lock\nkg.config.json\n.autosync-stamp\nlast-autosync.json\n"
+	for _, c := range []struct {
+		name, added string
+		keep        bool
+	}{
+		{"a negation of the token rule", "!kg.config.json", false},
+		{"a negation of the graph rule", "!graph.kuzu", false},
+		{"log/, which would stop the shards ever syncing", "log/", false},
+		{"*.ndjson, same effect", "*.ndjson", false},
+		{"log/*, same effect", "log/*", false},
+		{"everything", "*", false},
+		{"a harmless project note", "team-notes.md", true},
+		{"a harmless negation of something we do not ignore", "!README.md", true},
+	} {
+		dir := t.TempDir()
+		gi := filepath.Join(dir, ".gitignore")
+		if err := os.WriteFile(gi, []byte(canonical+c.added+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeOwnFile(gi, canonical, "graph.kuzu"); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(gi)
+		got := false
+		for _, l := range strings.Split(string(b), "\n") {
+			if strings.TrimSpace(l) == c.added {
+				got = true // whole-line match: "*" is not "graph.kuzu*"
+			}
+		}
+		if got != c.keep {
+			verb := "was dropped"
+			if got {
+				verb = "survived"
+			}
+			t.Errorf("%s: %q %s, want keep=%v\n%s", c.name, c.added, verb, c.keep, b)
+		}
+	}
+}
+
+func TestScaffoldDropsNegationsAndConflictMarkers(t *testing.T) {
+	canonical := "graph.kuzu*\n*.so\nkg.config.json\n"
+	dir := t.TempDir()
+	gi := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(gi, []byte(canonical+"!kg.config.json\nteam-notes.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOwnFile(gi, canonical, "graph.kuzu"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(gi)
+	if strings.Contains(string(got), "!kg.config.json") {
+		t.Errorf("a negation of our own rule survived: %q", got)
+	}
+	if !strings.Contains(string(got), "team-notes.md") {
+		t.Errorf("a harmless added line was dropped: %q", got)
+	}
+
+	conflicted := "<<<<<<< HEAD\ngraph.kuzu*\n=======\ngraph.kuzu*\n*.so\n>>>>>>> origin/main\n"
+	if err := os.WriteFile(gi, []byte(conflicted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOwnFile(gi, canonical, "graph.kuzu"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(gi)
+	for _, marker := range []string{"<<<<<<<", "=======", ">>>>>>>"} {
+		if strings.Contains(string(got), marker) {
+			t.Errorf("conflict marker %q survived, so the file never recovers: %q", marker, got)
+		}
+	}
+}
