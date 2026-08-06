@@ -100,21 +100,31 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 ### Fixed
 - **Sync cannot commit the cloud token, even when the store's ignore file is wrong.**
   **Upgrading with a git remote: check for a leaked token.** Every version through v1.4.0
-  could commit `kg.config.json` — which holds the cloud token — if the store's
-  `.gitignore` was missing at sync time, and how easily depends on the version:
-  **v0.1.3–v1.1.0** wrote that file only at `kg init` and never refreshed it, so a deleted
-  or lost ignore file was enough; **v1.2.0–v1.4.0** restore it during sync, so exposure
-  also required the store directory to be unwritable then (read-only mount, full disk,
-  permissions), because the restore failed and the failure was discarded. Both reproduced,
-  on builds of v1.1.0 and of the v1.4.0 base. Silent either way: sync reported success. Check the team repository with
+  could commit `kg.config.json` — which holds the cloud token — when the store's own
+  `.gitignore` was wrong at sync time. What counts as "wrong", and how rare it is, depends
+  on the era:
+
+  - **v0.1.3–v1.1.0** — sync never rewrote that file, so ANY wrong ignore file leaked:
+    deleted, replaced, or mangled by a merge. No disk or permission problem needed. Both
+    variants reproduced on a build of v1.1.0, store directory fully writable.
+  - **v1.2.0–v1.4.0** — sync rewrote the file every run, so a deleted or replaced one was
+    restored before staging. Exposure required that rewrite to FAIL: an unwritable store
+    directory (read-only mount, full disk, permissions), whose error was discarded.
+    Reproduced on a build of the v1.4.0 base. The v1.2.0 boundary itself is read-verified
+    (`EnsureScaffold` enters the sync path there), not built.
+  - Before v0.1.3 there was no git transport, so nothing could be pushed.
+
+  Silent in every case: sync reported success. Check the team repository with
   `git log --all --name-only | grep kg.config.json`; if it appears, rotate the token —
-  untracking does not remove it from history. A second route, through a *replaced*
-  ignore file, was introduced and fixed inside this cycle and never shipped: released
-  versions overwrote such a file before staging, and this release stopped doing that (it
-  refuses to overwrite a `.gitignore` kgai did not write) while sync still discarded the
-  error. Both are closed now: sync fails with the reason rather than proceeding, and the
-  git transport unstages `kg.config.json` and everything else the scaffold excludes after
-  `add -A`, so the token is never staged whatever the ignore rules say.
+  untracking does not remove it from history.
+
+  This release briefly widened the v1.2.0-era exposure before closing it: the scaffold
+  learned to refuse overwriting a `.gitignore` kgai did not write, which is right, while
+  sync still discarded the error — so a replaced file survived to the commit even on a
+  healthy disk. That window never shipped. Both halves are closed now: sync fails with the
+  reason rather than proceeding, and the git transport unstages `kg.config.json` and
+  everything else the scaffold excludes after `add -A`, so the token is never staged
+  whatever the ignore rules say.
 - **Changing a setting takes the store's write lock.** `kg config set` (and the older
   `kg remote <url>`) rewrote the whole config file from what the process had loaded, with
   no lock and no re-read. Racing an identity rotation restored the old `install_id` and
