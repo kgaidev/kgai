@@ -6,6 +6,84 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+### Added
+- **Three-layer configuration, with a custom capture prompt as one of its keys.**
+  Settings resolve session (`<store>/kg.config.json`) → project (`<repo>/.kgairc`,
+  committed) → global (`~/.kgai/config.json`), most specific wins, same shape in every
+  file. The new `prompt` key holds capture rules — what counts as a decision in this
+  repo, how elements are named — and a SessionStart hook hands them to the agent in
+  front of the knowledge-graph skill, so a repo's conventions arrive with a clone
+  instead of living in someone's head. Every key overrides rather than merges, so
+  `kg config` always names the single layer a value came from. Identity and the cloud
+  token deliberately do not layer. New `kg config` (get/set/unset, `--session` /
+  `--project` / `--global`, values from stdin or `--from-file`) and `kg prompt`;
+  `kg remote` is now a narrower view of the same resolution and reports every layer.
+- **A committed `.kgairc` is approved before it takes effect (`kg trust`).** It is the
+  one config layer nobody on the machine wrote — it arrives with `git clone`, from
+  whoever made that repository — and two of its keys used to act on that authority
+  alone. Reproduced before this landed: a committed `store` path overwrote a *different*
+  repository's `.gitignore` and scattered the log through its working tree, and with a
+  committed `remote` the SessionStart hooks pushed the developer's decisions (and, with
+  the store pointed at `$HOME`, their `.ssh` and `.env`) to a remote the repo's author
+  chose, then pulled that author's fabricated "team decisions" back into the log where
+  `kg search` returns them as genuine history. Now: the file decides nothing until
+  `kg trust`, the approval is bound to its content so any later commit asks again,
+  `kg trust --show` prints what it asks for, and a pending file is reported by
+  `kg config`, `kg prompt` and the session hook rather than silently ignored. Approving
+  happens in the session — Claude shows the store path and the rules and waits for an
+  answer (`/kgai:kg-trust`), and never approves on its own initiative — so nobody has to
+  leave the conversation for a terminal. Approvals are stored per machine in
+  `~/.kgai/trusted.json`, never in the repo, where one person's approval would travel to
+  everyone who clones it. What is approved is the SETTINGS the file asks for, not its
+  bytes — reformatting asks nothing new, a changed rule asks again, and one approval
+  covers every repo asking for the same thing, so a company standard is accepted once per
+  machine (inherited approvals are announced once). The whole model is documented in
+  [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+- **`remote` and `cloud_url` cannot be set in a committed file at all.** Syncing belongs
+  to the store, not to one repository — several repos can share one store, and one log
+  cannot push to two places depending on which repo the session started in — and
+  `cloud_url` is the address the install-local cloud token authenticates against. Both
+  are refused on write and ignored on read, and `kg config` lists them under
+  `ignored_keys` so the reason is visible.
+- **A `store` value that would damage something is refused, not obeyed.** An unset
+  `${VAR}` used to expand to `""`, resolve to the repository root, and let store init
+  overwrite that repo's own `.gitignore`/`.gitattributes`. Now an unresolved variable is
+  an error naming the variable; the repository root, the home directory, and any
+  directory already holding someone else's files are refused; symlinks are resolved
+  before the checks so a link cannot point them at one directory while writes land in
+  another; and the store's scaffold refuses to overwrite a `.gitignore` it did not write.
+- **A broken store setting stops the command instead of quietly moving the graph.**
+  A corrupt or conflicted `.kgairc` (a routine state for a committed file) used to be
+  swallowed, and decisions were recorded into a freshly minted per-project store that
+  nobody reads. `kg config` still answers — it is the command you run to find out what is
+  wrong — and reports `store_error`.
+- **Capture rules reach the model inside a delimiter the file cannot forge.** The fence
+  around injected rules was a fixed string, so rules text containing that string put the
+  rest of itself outside the data block, next to the instructions. The delimiter now
+  carries a per-session random tag, the boundary is restated after the data, and the
+  8,000-byte cap is enforced where the cost is actually paid — on read, since a
+  hand-written `.kgairc` never goes through `kg config set` (a 40 KB value was being
+  injected verbatim into every session).
+- **Several repositories can share one knowledge graph, without per-repo setup.** The
+  store location became a layered key too: committing `store` in a repo's `.kgairc`
+  enrolls it in a shared decision log, and every clone follows without per-developer
+  setup — previously only `KGAI_STORE`, which each developer had to export in every
+  shell, could do this. Repos that are not enrolled keep their own log, so a side
+  project never lands in the company graph; the global layer can still redirect every
+  repo on a machine, which suits a managed dev box and little else. Values take `~`,
+  `${VARS}` and repo-relative paths (anchored to the repository root), so one committed
+  value resolves on every machine. `store` is refused in the session layer, which lives
+  inside the store it would point at.
+  `kg config` reports the resolved `store_root` alongside the layer that decided it, and
+  the session-start installer now asks the engine whether a store exists instead of
+  guessing the per-project path. Worktrees keep sharing one graph AND one configuration:
+  the `.kgairc` that governs is the main worktree's, so a branch editing it cannot
+  repoint its worktree at another store. See [docs/SHARED-STORE.md](docs/SHARED-STORE.md).
+- **`kg help` explains the model, not just the verbs** — what elements, decisions,
+  supersession and conflicts are, the read-before/record-after flow, what belongs in the
+  log and what does not, where files live, and the JSON output contract. An agent that
+  runs `kg help` without the skill loaded now gets enough to use the tool correctly.
+
 ### Fixed
 - **The `kg` launcher reaches your terminal's PATH on macOS.** v1.4.0 decided whether
   `~/.local/bin` needed a profile line by looking at the PATH of the process running the

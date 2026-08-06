@@ -31,12 +31,15 @@ import (
 )
 
 // Config is persisted as kg.config.json (install-local, gitignored — the cloud token
-// therefore never leaves this machine via sync).
+// therefore never leaves this machine via sync). It is also the SESSION layer of the
+// layered configuration: the embedded Settings are the keys a project or the machine
+// can also set (see settings.go), and this layer wins over both.
 type Config struct {
-	InstallID  string `json:"install_id"`
-	Actor      string `json:"actor"`
-	Remote     string `json:"remote,omitempty"`
-	CloudURL   string `json:"cloud_url,omitempty"`
+	InstallID string `json:"install_id"`
+	Actor     string `json:"actor"`
+	// Settings is embedded, not nested: remote/prompt/cloud_url stay top-level keys in
+	// kg.config.json, so files written by earlier versions load unchanged.
+	Settings
 	CloudToken string `json:"cloud_token,omitempty"`
 	SchemaVer  int    `json:"schema_version"`
 
@@ -140,7 +143,31 @@ func DefaultRoot() string {
 	if v := os.Getenv("KGAI_STORE"); v != "" {
 		return v
 	}
+	// The `store` setting from the repo's .kgairc or this machine's config.json —
+	// how several repositories share one graph without every developer exporting
+	// KGAI_STORE by hand. The environment still wins, so a one-off override works.
+	if v, err := StoreRootFromLayers(); err == nil && v != "" {
+		return v
+	}
 	return filepath.Join(ProjectRoot(), ".kgai", "store")
+}
+
+// ResolveRoot is DefaultRoot with the reason a configured store was not used. Commands
+// go through this so a broken or unapproved `store` is reported rather than silently
+// swapped for the per-project default — recording into a store nobody reads is worse
+// than refusing to record.
+func ResolveRoot() (string, error) {
+	if v := os.Getenv("KGAI_STORE"); v != "" {
+		return v, nil
+	}
+	v, err := StoreRootFromLayers()
+	if err != nil {
+		return "", err
+	}
+	if v != "" {
+		return v, nil
+	}
+	return filepath.Join(ProjectRoot(), ".kgai", "store"), nil
 }
 
 // KgaiHome is the stable runtime/store home for kgai.
@@ -152,16 +179,23 @@ func KgaiHome() string {
 	return filepath.Join(home, ".kgai")
 }
 
-func (s *Store) logDir() string      { return filepath.Join(s.Root, "log") }
-func (s *Store) shardPath() string   { return filepath.Join(s.logDir(), s.Config.InstallID+".ndjson") }
-func (s *Store) configPath() string  { return filepath.Join(s.Root, "kg.config.json") }
-func (s *Store) GraphPath() string   { return filepath.Join(s.Root, "graph.kuzu") }
-func (s *Store) lockPath() string    { return filepath.Join(s.Root, ".kg.lock") }
+func (s *Store) logDir() string     { return filepath.Join(s.Root, "log") }
+func (s *Store) shardPath() string  { return filepath.Join(s.logDir(), s.Config.InstallID+".ndjson") }
+func (s *Store) configPath() string { return filepath.Join(s.Root, "kg.config.json") }
+func (s *Store) GraphPath() string  { return filepath.Join(s.Root, "graph.kuzu") }
+func (s *Store) lockPath() string   { return filepath.Join(s.Root, ".kg.lock") }
 
 // Init creates a new store (idempotent if already initialized).
 func Init(root, actor, remote string) (*Store, error) {
 	if root == "" {
-		root = DefaultRoot()
+		// ResolveRoot, not DefaultRoot: a `store` setting that cannot be honored must
+		// stop the command. Creating the per-project store instead would answer a
+		// misconfiguration by quietly building a second graph.
+		r, err := ResolveRoot()
+		if err != nil {
+			return nil, err
+		}
+		root = r
 	}
 	s := &Store{Root: root}
 	if err := os.MkdirAll(filepath.Join(root, "log"), 0o755); err != nil {
@@ -233,7 +267,11 @@ func addProjectIgnore(proj string) {
 // Open loads an existing store. Returns an error if not initialized.
 func Open(root string) (*Store, error) {
 	if root == "" {
-		root = DefaultRoot()
+		r, err := ResolveRoot()
+		if err != nil {
+			return nil, err
+		}
+		root = r
 	}
 	s := &Store{Root: root}
 	b, err := os.ReadFile(filepath.Join(root, "kg.config.json"))
@@ -260,6 +298,23 @@ func (s *Store) SaveConfig() error { return s.saveConfig() }
 // stamp) before the git transport's `add -A` could commit them.
 func (s *Store) EnsureScaffold() error { return s.ensureGitScaffold() }
 
+// writeOwnFile writes one of the store's scaffold files, but never over a file the
+// store did not write: `marker` is a line only our own version contains. A misconfigured
+// `store` used to point at a real project and this function then replaced that project's
+// .gitignore, which is data loss in someone's working tree. The store owns its root or
+// it writes nothing.
+func writeOwnFile(path, content, marker string) error {
+	if b, err := os.ReadFile(path); err == nil {
+		if !bytes.Contains(b, []byte(marker)) {
+			return fmt.Errorf("refusing to overwrite %s: it was not written by kgai (the store must own its directory — check the `store` setting)", path)
+		}
+		if string(b) == content {
+			return nil
+		}
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
 func (s *Store) ensureGitScaffold() error {
 	// .gitignore: derived graph cache, native libs, lock, and the install-local
 	// config (its installId/actor differ per install and must NOT be shared, or
@@ -267,12 +322,12 @@ func (s *Store) ensureGitScaffold() error {
 	// graph.kuzu may be a file or a directory depending on engine version; match
 	// both plus its wal/shadow files. *.so = downloaded native libs.
 	gi := "graph.kuzu*\n*.so\n.kg.lock\nkg.config.json\n.autosync-stamp\nlast-autosync.json\n"
-	if err := os.WriteFile(filepath.Join(s.Root, ".gitignore"), []byte(gi), 0o644); err != nil {
+	if err := writeOwnFile(filepath.Join(s.Root, ".gitignore"), gi, "graph.kuzu"); err != nil {
 		return err
 	}
 	// union merge driver for ndjson as a safety net (shards are per-install anyway).
 	ga := "*.ndjson merge=union\n"
-	if err := os.WriteFile(filepath.Join(s.Root, ".gitattributes"), []byte(ga), 0o644); err != nil {
+	if err := writeOwnFile(filepath.Join(s.Root, ".gitattributes"), ga, "*.ndjson merge=union"); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(s.Root, ".git")); errors.Is(err, os.ErrNotExist) {

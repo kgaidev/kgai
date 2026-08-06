@@ -232,11 +232,16 @@ ensure_on_path() {
 }
 
 ensure_store() {
-  # The store is per-project (<project>/.kgai/store). Create it once per project.
-  local proj cfg
+  # Create the store once, if the engine says there isn't one. ASK the engine rather
+  # than testing <project>/.kgai/store: the store may be configured elsewhere entirely
+  # (the `store` setting, KGAI_STORE — several repos sharing one graph), and a path
+  # guessed here would re-init on every session and miss the shared store completely.
+  local proj
   proj="$(project_root)"
-  cfg="$proj/.kgai/store/kg.config.json"
-  [ -f "$cfg" ] && return 0
+  ( cd "$proj" && KGAI_HOME="$KGAI_HOME" \
+      LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
+      DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" status 2>/dev/null |
+      grep -q '"initialized": *false' ) || return 0
   ( cd "$proj" && KGAI_HOME="$KGAI_HOME" \
       LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
       DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" init ) >/dev/null 2>&1 || true

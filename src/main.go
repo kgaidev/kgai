@@ -70,6 +70,13 @@ func dispatch(cmd string, args []string) error {
 		return cmdSync(args)
 	case "remote":
 		return cmdRemote(args)
+	case "config":
+		return cmdConfig(args)
+	case "trust":
+		return cmdTrust(args)
+	case "prompt":
+		// Shorthand for the one key hooks and skills read on every session.
+		return cmdConfig(append([]string{"get"}, append(args, "prompt")...))
 	case "rotate":
 		return cmdRotate(args)
 	case "rebuild":
@@ -96,7 +103,13 @@ func dispatch(cmd string, args []string) error {
 // lazily creating the per-project store on first use so recording a decision always
 // works in a fresh project — no `kg init` required.
 func open() (*engine.Engine, error) {
-	root := os.Getenv("KGAI_STORE")
+	// ResolveRoot, not the env var alone: a `store` setting that is broken, points
+	// somewhere unusable, or has not been approved must stop the command. Falling back
+	// to the per-project default would record the decision into a store nobody reads.
+	root, err := store.ResolveRoot()
+	if err != nil {
+		return nil, err
+	}
 	s, err := store.Open(root)
 	if err != nil {
 		s, err = store.Init(root, "", "")
@@ -113,7 +126,11 @@ func open() (*engine.Engine, error) {
 // (nil, nil); callers emit their empty result shape plus noStoreNote() so an agent
 // reads a clean "nothing recorded here yet" instead of an error.
 func openRead() (*engine.Engine, error) {
-	s, err := store.Open(os.Getenv("KGAI_STORE"))
+	root, err := store.ResolveRoot()
+	if err != nil {
+		return nil, err // a broken/unapproved `store` setting is loud on reads too
+	}
+	s, err := store.Open(root)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil // no store yet — NOT an error, and nothing is created
@@ -436,13 +453,17 @@ func cmdSync(args []string) error {
 	return nil
 }
 
-// cmdRemote shows or sets the sync remote. With no arguments it reports the local and
-// global values plus the effective one; a URL argument sets the LOCAL remote (this
-// project), --global sets the machine-wide default in <KGAI_HOME>/config.json, --unset
-// clears. The local sentinel "none" opts this project out of a global remote.
+// cmdRemote shows or sets the sync remote — a thin view onto the layered config
+// (`kg config … remote`), kept because setting a remote is the one configuration step
+// almost every user performs. With no arguments it reports every layer plus the
+// effective value; a URL sets it in the session layer, --project in the repo's
+// committed .kgairc, --global machine-wide. The sentinel "none" opts a project out
+// of a remote inherited from a broader layer.
 func cmdRemote(args []string) error {
 	fs := flag.NewFlagSet("remote", flag.ContinueOnError)
-	global := fs.Bool("global", false, "operate on the global default (<KGAI_HOME>/config.json) instead of this project")
+	global := fs.Bool("global", false, "operate on the machine-wide layer (<KGAI_HOME>/config.json)")
+	project := fs.Bool("project", false, "operate on the repo's committed layer (<repo>/.kgairc)")
+	session := fs.Bool("session", false, "operate on this install's layer (<store>/kg.config.json) — the default")
 	unset := fs.Bool("unset", false, "clear the remote instead of setting it")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -451,90 +472,398 @@ func cmdRemote(args []string) error {
 	if *unset && url != "" {
 		return fmt.Errorf("--unset takes no URL argument")
 	}
-
-	switch {
-	case *unset && *global:
-		gc, err := store.LoadGlobalConfig()
-		if err != nil {
-			return err
-		}
-		gc.Remote = ""
-		if err := store.SaveGlobalConfig(gc); err != nil {
-			return err
-		}
-	case *unset:
-		return setLocalRemote("")
-	case url != "" && *global:
-		if url == store.RemoteNone {
-			return fmt.Errorf("%q is a per-project opt-out; use `kg remote --global --unset` to clear the global default", store.RemoteNone)
-		}
-		gc, err := store.LoadGlobalConfig()
-		if err != nil {
-			return err
-		}
-		gc.Remote = url
-		if err := store.SaveGlobalConfig(gc); err != nil {
-			return err
-		}
-	case url != "":
-		return setLocalRemote(url)
-	}
-
-	// Always end by reporting the resulting state. Showing state is a read — it must
-	// not create a store, so a missing one reports the global default alone.
-	e, err := openRead()
+	scope, err := configScope(*session, *project, *global)
 	if err != nil {
 		return err
 	}
-	gc, err := store.LoadGlobalConfig()
-	if err != nil {
-		return err
-	}
-	if e == nil {
-		effective, source := "", ""
-		if gc.Remote != "" {
-			effective, source = store.ExpandRemote(gc.Remote), "global"
+
+	if *unset || url != "" {
+		if err := writeConfig(scope, "remote", url); err != nil {
+			return err
 		}
-		return noStore(map[string]any{
-			"local":     "",
-			"global":    gc.Remote,
-			"effective": effective,
-			"source":    source,
-		})
 	}
-	effective, source := e.S.EffectiveRemote()
-	emit(map[string]any{
-		"ok":        true,
-		"local":     e.S.Config.Remote,
-		"global":    gc.Remote,
+	return showRemote()
+}
+
+// showRemote reports the remote per layer and the effective result. Showing state is a
+// read — it must not create a store, so a missing one reports the broader layers alone.
+func showRemote() error {
+	layers, storeErr := loadLayers()
+	per := map[string]any{}
+	for _, l := range layers {
+		per[l.Name] = l.Settings.Remote
+	}
+	effective, source := store.Effective(layers, "remote")
+	if effective == store.RemoteNone {
+		effective, source = "", "disabled"
+	} else if effective != "" {
+		effective = store.ExpandRemote(effective)
+	}
+	out := map[string]any{
+		"session":   per[store.LayerSession],
+		"project":   per[store.LayerProject],
+		"global":    per[store.LayerGlobal],
 		"effective": effective,
 		"source":    source,
-	})
+	}
+	if storeErr != "" {
+		out["store_error"] = storeErr
+	}
+	emit(out)
 	return nil
 }
 
-func setLocalRemote(url string) error {
-	var e *engine.Engine
-	var err error
-	if url == "" {
-		// Unsetting: nothing to clear if no store exists — don't create one for it.
-		if e, err = openRead(); err != nil {
+// cmdConfig reads and writes the layered configuration (session > project > global,
+// see store/settings.go). Flags precede the subcommand's arguments, as everywhere else
+// in this CLI:
+//
+//	kg config                                  every layer + each effective value and its source
+//	kg config get [--raw] <key>                one key, with the layer it came from
+//	kg config set [--scope] <key> <value|->     - reads the value from stdin
+//	kg config unset [--scope] <key>
+//
+// Scope defaults to the session layer. --project writes the repo's committed .kgairc;
+// --global writes this machine's default, which is otherwise never touched.
+func cmdConfig(args []string) error {
+	sub := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
+	fs := flag.NewFlagSet("config", flag.ContinueOnError)
+	global := fs.Bool("global", false, "operate on the machine-wide layer (<KGAI_HOME>/config.json)")
+	project := fs.Bool("project", false, "operate on the repo's committed layer (<repo>/.kgairc)")
+	session := fs.Bool("session", false, "operate on this install's layer (<store>/kg.config.json) — the default")
+	raw := fs.Bool("raw", false, "print the value alone, unquoted (get)")
+	fromFile := fs.String("from-file", "", "read the value from a file (set)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	scope, err := configScope(*session, *project, *global)
+	if err != nil {
+		return err
+	}
+
+	switch sub {
+	case "", "show", "list":
+		return showConfig()
+	case "get":
+		return getConfig(fs.Arg(0), *raw)
+	case "set", "unset":
+		key := fs.Arg(0)
+		if key == "" {
+			return fmt.Errorf("%s needs a key — one of: %s", sub, strings.Join(store.SettingKeys, ", "))
+		}
+		val := ""
+		if sub == "set" {
+			if val, err = configValue(fs.Arg(1), *fromFile); err != nil {
+				return err
+			}
+			if val == "" {
+				return fmt.Errorf("set needs a value: `kg config set %s <value>`, `--from-file F`, or `-` to read stdin (use `kg config unset %s` to clear it)", key, key)
+			}
+		}
+		if err := writeConfig(scope, key, val); err != nil {
 			return err
 		}
-		if e == nil {
-			return noStore(nil)
+		return showConfig()
+	}
+	return fmt.Errorf("unknown config subcommand %q — use show, get, set or unset", sub)
+}
+
+// cmdTrust approves this repository's committed .kgairc — the one config layer that
+// arrives with a clone rather than being written by the person running kgai. Until it
+// is approved it decides nothing; approval is bound to the file's content, so any later
+// edit or pulled commit asks again.
+//
+//	kg trust            show what the file asks for, and approve it
+//	kg trust --show     show it without approving (what a hook tells the user to read)
+//	kg trust --revoke   withdraw approval
+//	kg trust --list     every file approved on this machine
+func cmdTrust(args []string) error {
+	fs := flag.NewFlagSet("trust", flag.ContinueOnError)
+	show := fs.Bool("show", false, "print what the file asks for without approving it")
+	revoke := fs.Bool("revoke", false, "withdraw approval for the configuration this repo asks for")
+	list := fs.Bool("list", false, "list every configuration approved on this machine")
+	ack := fs.Bool("ack", false, "record that this repo uses an already-approved configuration (announced once)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	path := store.ProjectConfigPath()
+	if *list {
+		recs, err := store.TrustedConfigs()
+		if err != nil {
+			return err
 		}
-	} else if e, err = open(); err != nil {
-		// Setting a remote is deliberate configuration — creating the store is intended.
+		emit(map[string]any{"trusted": recs, "count": len(recs),
+			"note": "approval is per CONFIGURATION, not per repo: `paths` says where each was accepted from, and every repo asking for the same thing is covered"})
+		return nil
+	}
+	if *ack {
+		if err := store.Ack(path); err != nil {
+			return err
+		}
+		emit(map[string]any{"path": path, "acknowledged": true})
+		return nil
+	}
+
+	if *revoke {
+		had, err := store.Untrust(path)
+		if err != nil {
+			return err
+		}
+		emit(map[string]any{"path": path, "revoked": had,
+			"note": "that configuration no longer decides anything on this machine — including in other repos that asked for the same thing; `kg trust` re-approves it"})
+		return nil
+	}
+
+	// What is being approved, in full — approving a hash nobody read is not consent.
+	var st store.Settings
+	var exists bool
+	if err := store.ReadConfigFile(path, &st, &exists); err != nil {
 		return err
 	}
-	e.S.Config.Remote = url
-	if err := e.S.SaveConfig(); err != nil {
+	if !exists {
+		return fmt.Errorf("no %s in this repository — there is nothing to approve", path)
+	}
+	asks := map[string]any{}
+	if st.StoreRoot != "" {
+		resolved, err := store.ExpandStorePath(st.StoreRoot)
+		if err != nil {
+			asks["store"] = map[string]any{"value": st.StoreRoot, "error": err.Error()}
+		} else {
+			asks["store"] = map[string]any{"value": st.StoreRoot, "resolves_to": resolved}
+		}
+	}
+	if st.Prompt != "" {
+		asks["prompt"] = st.Prompt
+	}
+	ignored := []string{}
+	for _, key := range store.SettingKeys {
+		if v, _ := st.Get(key); v != "" && !store.KeyAllowedIn(key, store.LayerProject) {
+			ignored = append(ignored, key)
+		}
+	}
+	ts, err := store.TrustStateOf(path)
+	if err != nil {
 		return err
 	}
-	effective, source := e.S.EffectiveRemote()
-	emit(map[string]any{"ok": true, "local": url, "effective": effective, "source": source})
+	out := map[string]any{"path": path, "asks_for": asks, "already_approved": ts.Trusted}
+	if ts.InheritedFrom != "" {
+		out["approval_inherited_from"] = ts.InheritedFrom
+		out["inherited_note"] = "this is the same configuration you already approved there, so it is already in effect here"
+	}
+	if len(ignored) > 0 {
+		out["ignored_keys"] = ignored
+		out["ignored_note"] = "these keys are never taken from a committed file and are ignored whether or not you approve it"
+	}
+	if *show {
+		out["note"] = "run `kg trust` to approve; until then this file decides nothing"
+		emit(out)
+		return nil
+	}
+	fp, err := store.Trust(path)
+	if err != nil {
+		return err
+	}
+	out["approved"] = true
+	out["fingerprint"] = fp
+	out["note"] = "approved for this machine; any later change to the file asks again"
+	emit(out)
 	return nil
+}
+
+func configScope(session, project, global bool) (string, error) {
+	n := 0
+	for _, b := range []bool{session, project, global} {
+		if b {
+			n++
+		}
+	}
+	if n > 1 {
+		return "", fmt.Errorf("--session, --project and --global are mutually exclusive — a value is written to exactly one layer")
+	}
+	switch {
+	case project:
+		return store.LayerProject, nil
+	case global:
+		return store.LayerGlobal, nil
+	}
+	return store.LayerSession, nil
+}
+
+// configValue takes the value from --from-file, from stdin ("-"), or verbatim. Files
+// and stdin keep multi-line text (a prompt) readable at the shell.
+func configValue(arg, fromFile string) (string, error) {
+	var b []byte
+	var err error
+	switch {
+	case fromFile != "":
+		b, err = os.ReadFile(fromFile)
+	case arg == "-":
+		b, err = io.ReadAll(os.Stdin)
+	default:
+		return arg, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(b), "\n"), nil
+}
+
+// loadLayers resolves the layers for a read. Reading configuration must never mint a
+// store: `kg config` answers the same before and after `kg init`.
+//
+// storeErr carries a store that could not be resolved (a `store` setting pointing
+// somewhere unusable, a corrupt .kgairc) WITHOUT failing: `kg config` is the command
+// people run to find out what is wrong, so it has to keep working when something is.
+func loadLayers() ([]store.Layer, string) {
+	e, err := openRead()
+	if err != nil {
+		layers, lerr := store.LoadLayers(nil)
+		if lerr != nil {
+			// Even the files themselves don't parse — report that instead.
+			return []store.Layer{{Name: store.LayerSession}, {Name: store.LayerProject}, {Name: store.LayerGlobal}}, lerr.Error()
+		}
+		return layers, err.Error()
+	}
+	var s *store.Store
+	if e != nil {
+		s = e.S
+	}
+	layers, lerr := store.LoadLayers(s)
+	if lerr != nil {
+		return []store.Layer{{Name: store.LayerSession}, {Name: store.LayerProject}, {Name: store.LayerGlobal}}, lerr.Error()
+	}
+	return layers, ""
+}
+
+func showConfig() error {
+	layers, storeErr := loadLayers()
+	effective := map[string]any{}
+	sources := map[string]any{}
+	for _, k := range store.SettingKeys {
+		v, src := store.Effective(layers, k)
+		effective[k], sources[k] = v, src
+	}
+	// store_root is the RESOLVED path (placeholders expanded, KGAI_STORE honored) —
+	// the answer to "is this repo really using the shared graph?", which the raw
+	// `store` value alone does not give.
+	out := map[string]any{
+		"effective": effective,
+		"sources":   sources,
+		"layers":    layers,
+	}
+	if root, err := store.ResolveRoot(); err == nil {
+		out["store_root"] = root
+	} else {
+		// The store cannot be resolved — say so here rather than failing, because this
+		// is the command someone runs to find out why.
+		out["store_error"] = err.Error()
+	}
+	if storeErr != "" && out["store_error"] == nil {
+		out["store_error"] = storeErr
+	}
+	// A repo config waiting for approval is reported, never silently ignored: an
+	// unexplained fallback to the per-project store is how decisions end up in a graph
+	// nobody looks at.
+	for _, l := range layers {
+		if l.Pending {
+			out["pending_approval"] = l.Path
+			out["note"] = "this repo's .kgairc has not been approved on this machine, so it decides nothing yet — `kg trust --show` prints what it asks for, `kg trust` approves it"
+		}
+		if l.InheritedFrom != "" {
+			out["approval_inherited_from"] = l.InheritedFrom
+		}
+	}
+	emit(out)
+	return nil
+}
+
+func getConfig(key string, raw bool) error {
+	if key == "" {
+		return fmt.Errorf("get needs a key — one of: %s", strings.Join(store.SettingKeys, ", "))
+	}
+	layers, _ := loadLayers()
+	// Validate the key against a layer so a typo fails loudly instead of reporting
+	// "unset" — the difference matters when a hook acts on the answer.
+	if _, err := layers[0].Settings.Get(key); err != nil {
+		return err
+	}
+	val, source := store.Effective(layers, key)
+	pending := ""
+	for _, l := range layers {
+		if l.Pending {
+			pending = l.Path
+		}
+	}
+	if raw {
+		// Plain text for hooks and scripts: the value alone, nothing to parse. An
+		// unset key prints nothing and still exits 0 — "nothing configured" is a
+		// normal state, not a failure.
+		if val != "" {
+			fmt.Println(val)
+		}
+		return nil
+	}
+	out := map[string]any{"key": key, "value": val, "source": source}
+	for _, l := range layers {
+		if l.InheritedFrom != "" {
+			out["approval_inherited_from"] = l.InheritedFrom
+		}
+	}
+	if pending != "" {
+		// Same reason as in showConfig: a config that is being ignored has to say so,
+		// on every surface that reports its value.
+		out["pending_approval"] = pending
+	}
+	emit(out)
+	return nil
+}
+
+// writeConfig persists one key into one layer. Callers report the resulting state
+// themselves, so `kg remote` can keep its remote-shaped output.
+func writeConfig(scope, key, val string) error {
+	if err := store.ValidateLayerKey(scope, key); err != nil {
+		return err
+	}
+	switch scope {
+	case store.LayerSession:
+		// The session layer lives inside the store, which owns its own locking and
+		// identity fields — go through the store, not the file.
+		var e *engine.Engine
+		var err error
+		if val == "" {
+			// Clearing: nothing to clear if no store exists — don't create one for it.
+			if e, err = openRead(); err != nil {
+				return err
+			}
+			if e == nil {
+				return nil
+			}
+		} else if e, err = open(); err != nil {
+			// Writing configuration is deliberate — creating the store is intended.
+			return err
+		}
+		if err := e.S.Config.Settings.Set(key, val); err != nil {
+			return err
+		}
+		return e.S.SaveConfig()
+	case store.LayerProject:
+		return store.WriteLayer(scope, store.ProjectConfigPath(), key, val)
+	case store.LayerGlobal:
+		if key == "remote" && val == store.RemoteNone {
+			return fmt.Errorf("%q opts a project out of a remote inherited from a broader layer; the global layer has nothing above it — use `kg config unset --global remote`", store.RemoteNone)
+		}
+		gc, err := store.LoadGlobalConfig()
+		if err != nil {
+			return err
+		}
+		if err := gc.Set(key, val); err != nil {
+			return err
+		}
+		return store.SaveGlobalConfig(gc)
+	}
+	return fmt.Errorf("unknown layer %q", scope)
 }
 
 func cmdRotate(args []string) error {
@@ -670,6 +999,30 @@ func usage() {
 
 USAGE: kg <command> [flags]
 
+WHAT THIS IS
+  The live graph is a small set of ELEMENTS — domain things (feature:Invoice,
+  service:Billing), not files — joined by LINKS (PART_OF, DEPENDS_ON, RENDERS…).
+  A DECISION is an immutable event that MUTATES that graph (adds an element, adds
+  or retires a link, sets a property) and carries who decided, why, and when.
+  Nothing is ever edited or deleted: recording a new decision SUPERSEDES the
+  previous one on the elements it governs, so the graph shows the current shape
+  and the log keeps the whole story ("kg history", "kg as-of <date>").
+  Two decisions taking authority over one element concurrently = a conflict
+  ("kg conflicts"), resolved by one decision that takes authority again.
+
+TYPICAL FLOW
+  Before changing code   kg context --paths "src/billing/*"   what governs this area
+                         kg search "how is invoicing structured"
+  After a real decision  kg ingest <<'JSON' … JSON            one call, all mutations
+  Answering "why is X"   kg history "feature:Invoice"
+
+  What belongs in the log: structural choices about the domain — split/merge/move a
+  feature, change a dependency or ownership, how something is exposed, deprecating a
+  prior choice, renaming a domain element, and the dead ends you ruled out (with the
+  reason). What does not: behavior-preserving refactors, file/function renames,
+  formatting, bug fixes, and analyses or reports nobody acted on. The bundled
+  knowledge-graph skill carries the full rules and the ingest payload shape.
+
 WRITE
   init [--actor NAME] [--root DIR]                   initialize the store
   ingest [--file F] [--dry-run]                      record decision(s) + graph mutations from stdin JSON
@@ -690,11 +1043,29 @@ ADMIN
                experimental (untested). --auto is the background mode the
                plugin hooks fire: silent no-op without a store/remote, honors
                a cooldown, never blocks on the store lock
-  remote [URL] [--global] [--unset]
-               show or set the sync remote. No args: local, global and effective
-               values. URL sets this project's remote; --global sets the
-               machine-wide default ({project} expands to the project dir name);
-               local value "none" opts this project out of the global default
+  config [get|set|unset] [--session|--project|--global] [--raw] [KEY] [VALUE|-]
+               layered configuration, most specific first:
+                 session  <store>/kg.config.json   this install (default scope)
+                 project  <repo>/.kgairc           committed — the repo's default
+                 global   <KGAI_HOME>/config.json  this machine
+               keys: prompt (capture rules given to the agent, any layer),
+               store (where the log lives; project/global), remote (session/global
+               — syncing belongs to the store, never to a committed file),
+               cloud_url (session only, beside the token it authenticates with).
+               No args shows every layer, each effective value and its source.
+               VALUE of "-" reads stdin; --from-file F reads a file
+  trust [--show|--revoke|--list]
+               approve this repo's committed .kgairc. It arrives with a clone, from
+               whoever wrote that repository, so it decides NOTHING until approved,
+               and any later change to it asks again. --show prints what it asks for
+               without approving. NEVER run the approving form on your own initiative:
+               it is the user's decision, so report and let them run it
+  prompt       shorthand for "config get prompt" (--raw for the text alone)
+  remote [URL] [--session|--project|--global] [--unset]
+               show or set the sync remote — the same key through a narrower
+               view. No args: every layer plus the effective value. {project}
+               expands to the project dir name; value "none" in a non-global
+               layer opts that project out of a remote inherited from above
   rotate       give this store a fresh install identity (fix for a copied store
                after sync reports a shard fork)
   rebuild      discard graph cache and replay the whole log
@@ -702,8 +1073,19 @@ ADMIN
   status       config + graph summary at a glance (remote/cloud, counts)
   doctor       verify hash chains and report store health
 
+WHERE THINGS LIVE
+  <project>/.kgai/store   the decision log (own git cycle; the "store" setting or
+                          KGAI_STORE moves it — several repos can share one graph)
+  <repo>/.kgairc          committed project config: the repo's defaults for everyone
+  ~/.kgai                 the engine, its native lib, and this machine's config.json
+  Store location, remote, capture prompt and cloud URL resolve in three layers,
+  most specific first: session > project > global ("kg config" shows all of them).
+
 OUTPUT
   human-readable on a terminal; stable JSON when piped (what agents consume).
-  pass --json to force JSON on a terminal.
+  pass --json to force JSON on a terminal. Every successful JSON carries "ok": true;
+  a failure is {"ok": false, "error": "…"} with exit code 1. Read commands never
+  create a store — where nothing was recorded they answer empty and say so, so an
+  empty result means "nothing recorded yet", never "something went wrong".
 `)
 }

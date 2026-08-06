@@ -179,9 +179,81 @@ Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ## Configuration
 
+Settings resolve in three layers, most specific first — the same shape in every file,
+the way `git config` and npm do it:
+
+| Layer | File | Who it is for |
+|---|---|---|
+| **session** | `<project>/.kgai/store/kg.config.json` | this install; never committed (holds the cloud token) |
+| **project** | `<repo>/.kgairc` | **committed** — the repo's default for everyone who clones it |
+| **global** | `~/.kgai/config.json` | this machine; written only when you ask for it |
+
+All three files hold the same JSON shape — only the location decides the layer, the way
+npm layers `.npmrc`. Every key overrides — nothing merges — so `kg config` can always
+name the one layer a value came from.
+
+| Key | What it is | Where it may be set |
+|---|---|---|
+| `prompt` | your capture rules, given to the agent | any layer |
+| `store` | where the decision log lives | project, global |
+| `remote` | sync target | session, global |
+| `cloud_url` | kgai cloud broker | session |
+
+`remote` and `cloud_url` are deliberately **not** taken from the committed file. Syncing
+belongs to the store, not to one repo (several repos can share one store, and one log
+cannot push to two places), and `cloud_url` is the address your install-local token
+authenticates against. Identity (`install_id`, `actor`, `machine`) and the token itself
+do not layer at all.
+
+```bash
+kg config                                   # every layer, each effective value, its source
+kg config set --project prompt "…"          # commit a capture rule for the whole repo
+kg config set --global prompt -             # multi-line value from stdin
+kg config unset prompt                      # clear it in this install; broader layers return
+kg remote s3://team/kg                      # sync target for this store
+```
+
+**A committed `.kgairc` decides nothing until you approve it.** It is the one layer you
+did not write — it arrives with `git clone`, from whoever made that repository — so kgai
+ignores it until you say otherwise, and asks again whenever its content changes (a
+teammate's commit, a `git pull`).
+
+You approve it **in the session**: Claude shows you the store path and the capture rules
+the file asks for and waits for your answer — `/kgai:kg-trust` starts that on demand. It
+never approves on its own initiative, whatever the file says. By hand it is:
+
+```bash
+kg trust --show    # what this repo's config asks for — approves nothing
+kg trust           # approve it on this machine
+kg trust --revoke  # withdraw
+```
+
+Until then `kg config` reports it as `pending_approval` and the session says so instead
+of loading the rules — nothing is blocked meanwhile, the project just keeps its own store.
+What you approve is what the file **asks for** — the values of `prompt` and `store` —
+not its bytes: reformatting it asks nothing new, changing a rule asks again, and one
+approval covers every repo asking for the same thing (a company standard is accepted once
+per machine, and an inherited approval is announced once). Approvals live in
+`~/.kgai/trusted.json`: per machine, per user, never synced. They cannot live in `.kgairc`
+itself — that file is committed, so one person's approval would travel to everyone who
+clones it, which is exactly what the step exists to prevent.
+
+**[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** is the full model: every key, which
+layer may set it and why, what a committed config can and cannot cause, and the residual
+risks.
+
+**Project capture rules (`prompt`).** Whatever you put in this key is given to the agent
+at the start of every session, in front of the knowledge-graph skill — the place for
+conventions like *"elements are named after bounded contexts"* or *"every decision
+carries the ticket ref"*. Commit it in `.kgairc` and the whole team's agents record the
+same way; keep it in the global layer and it is just yours. The rules can only add to the
+skill's rules, never relax them, and they reach the model framed as configuration data
+inside a delimiter the file cannot forge — not as instructions from you. Anything past
+8,000 bytes is truncated, because it is paid for at every session start.
+
 | Env | Meaning | Default |
 |---|---|---|
-| `KGAI_STORE` | knowledge-graph store location | `<project>/.kgai/store` (per-project) |
+| `KGAI_STORE` | knowledge-graph store location (beats the `store` setting) | `<project>/.kgai/store` (per-project) |
 | `KGAI_PROJECT` | project root used to locate the store | git top-level (worktrees → main worktree) |
 | `KGAI_HOME` | engine binary + native lib home | `~/.kgai` |
 | `KGAI_ACTOR` | your name on recorded decisions | git user / `$USER` |
@@ -189,17 +261,36 @@ Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 By default the KG is **per-project**: each project gets its own graph in
 `<project>/.kgai/store` (auto-created on first use and added to the project's
-`.gitignore`). The engine binary itself is shared in `~/.kgai`. Point `KGAI_STORE` at a
-shared path if you want several projects to write into one graph.
+`.gitignore`). The engine binary itself is shared in `~/.kgai`.
+
+**Several repositories, one graph.** In a company the same people move between
+`shop-api`, `billing` and `web`, and decisions cross those lines — *"payments moved out
+of shop-api into billing"* is one decision about two repos. Enroll a repository into a
+shared log once, commit it, and every clone follows without any per-developer setup:
+
+```bash
+kg config set --project store '${HOME}/kgai'   # this repo joins the shared graph
+git add .kgairc && git commit -m "kgai: record into the shared company graph"
+# on every machine that clones it, once:
+kg trust                                       # approve what the repo asks for
+```
+
+`${HOME}`, `~` and repo-relative paths keep the committed value portable across
+machines. Repos you never enroll keep their own log, so a side project never lands in
+the company graph. `kg config` reports the resolved `store_root` and which layer decided
+it — details, trade-offs and the migration path in
+**[docs/SHARED-STORE.md](docs/SHARED-STORE.md)**.
 
 **Branches and worktrees.** The graph is per *project*, not per branch. The store lives
 outside your project's git (it has its own repo and sync cycle), so `git checkout` never
 changes it: a decision recorded on a feature branch is visible from `main` immediately,
 and decisions never cause merge conflicts in your code. `git worktree` follows the same
 rule — every worktree of a project resolves to the main worktree's store, so switching to
-a worktree does not hand you an empty graph. The flip side is that a decision recorded on
-a branch you later abandon stays in the graph; record a superseding decision to retract
-it.
+a worktree does not hand you an empty graph. The configuration follows the store: the
+`.kgairc` that governs is the one in the main worktree, so a branch cannot repoint its
+worktree at a different graph; edits take effect once merged and checked out there. The
+flip side is that a decision recorded on a branch you later abandon stays in the graph;
+record a superseding decision to retract it.
 
 ## Team sync
 
@@ -265,9 +356,12 @@ Claude once, at the next session start; `kg sync` shows the reason.
 Installing a plugin only downloads its files — Claude Code runs no code at that moment,
 and a plugin has no post-install hook. The engine and the `kg` launcher are set up by the
 plugin's `SessionStart` hook, so they appear the first time you actually start a Claude
-Code session with the plugin enabled. Start one session and `kg` works from then on. To
-skip the wait — or to get the CLI on a machine that won't run Claude Code at all — use the
-[by-hand install](#install-the-cli-by-hand).
+Code session with the plugin enabled. Start one session, open a new terminal, and `kg`
+works from then on. To skip the wait — or to get the CLI on a machine that won't run
+Claude Code at all — use the [by-hand install](#install-the-cli-by-hand). If it is still
+missing after that, `~/.local/bin` isn't on your `PATH`: v1.4.0 could misjudge that on
+macOS and skip the profile line, which v1.4.1 fixes at the next session start. Adding
+`export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` yourself does the same thing.
 
 **The plugin updated, but my engine didn't.**
 It does now: the installer compares a fingerprint that includes the plugin version, so a

@@ -82,7 +82,10 @@ func TestProjectRootLinkedWorktreeResolvesToMainWorktree(t *testing.T) {
 
 // Same store means the same default store path — that is what actually shares the graph.
 func TestDefaultRootSharedAcrossWorktrees(t *testing.T) {
-	t.Setenv("KGAI_STORE", "") // ignore any store override in the developer's environment
+	// Ignore any store override in the developer's own environment or machine config —
+	// both can now redirect DefaultRoot, which would make this assertion vacuous.
+	t.Setenv("KGAI_STORE", "")
+	t.Setenv("KGAI_HOME", t.TempDir())
 	root := newRepo(t)
 	wt := filepath.Join(filepath.Dir(root), "wt-store")
 	git(t, root, "worktree", "add", "-q", "-b", "feature-store", wt)

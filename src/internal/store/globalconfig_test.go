@@ -8,8 +8,8 @@ import (
 
 // EffectiveRemote decides where a project's decisions sync to, so precedence mistakes
 // either strand a project offline or push its log somewhere unintended. The contract:
-// local kg.config.json > global <KGAI_HOME>/config.json, and the local sentinel "none"
-// opts a project out entirely.
+// session kg.config.json > project .kgairc > global <KGAI_HOME>/config.json, and the
+// sentinel "none" in a non-global layer opts a project out entirely.
 
 // testStore gives a Store with the given local remote, a temp KGAI_HOME (so the real
 // global config never leaks in), and a fixed project root for {project} expansion.
@@ -17,22 +17,22 @@ func testStore(t *testing.T, localRemote string) *Store {
 	t.Helper()
 	t.Setenv("KGAI_HOME", t.TempDir())
 	t.Setenv("KGAI_PROJECT", filepath.Join(string(os.PathSeparator), "work", "shop-api"))
-	return &Store{Config: Config{Remote: localRemote}}
+	return &Store{Config: Config{Settings: Settings{Remote: localRemote}}}
 }
 
 func setGlobal(t *testing.T, remote string) {
 	t.Helper()
-	if err := SaveGlobalConfig(GlobalConfig{Remote: remote}); err != nil {
+	if err := SaveGlobalConfig(Settings{Remote: remote}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestEffectiveRemoteLocalWinsOverGlobal(t *testing.T) {
+func TestEffectiveRemoteSessionWinsOverGlobal(t *testing.T) {
 	s := testStore(t, "s3://local-bucket/kg")
 	setGlobal(t, "s3://global-bucket/kg/{project}")
 	url, source := s.EffectiveRemote()
-	if url != "s3://local-bucket/kg" || source != "local" {
-		t.Errorf("got (%q, %q), want the local remote to win", url, source)
+	if url != "s3://local-bucket/kg" || source != LayerSession {
+		t.Errorf("got (%q, %q), want the session remote to win", url, source)
 	}
 }
 

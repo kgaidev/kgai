@@ -8,27 +8,20 @@ import (
 	"strings"
 )
 
-// GlobalConfig is the user-wide config at <KgaiHome>/config.json. It holds defaults
-// that apply to every project on this machine; a project's own kg.config.json always
-// wins. Distinct from the per-store kg.config.json: nothing identity-bound (installId,
-// tokens) belongs here.
-type GlobalConfig struct {
-	// Remote is the default sync remote for projects that have none configured
-	// locally. The literal "{project}" expands to the project directory's name, so
-	// s3://bucket/kg/{project} gives every project its own prefix; without the
-	// placeholder all projects share one remote (and therefore one merged graph).
-	Remote string `json:"remote,omitempty"`
-}
+// The global layer is <KgaiHome>/config.json: defaults that apply to every project on
+// this machine. It is written only when explicitly asked for (`kg config --global`,
+// `kg remote --global`) and is the weakest layer — a project's committed .kgairc and
+// this install's own kg.config.json both override it. See settings.go for the shape.
 
-// RemoteNone is the per-project sentinel that opts a project out of syncing even when
-// a global remote is configured ("this project stays local").
+// RemoteNone is the sentinel that opts a project out of syncing even when a broader
+// layer configures a remote ("this project stays local").
 const RemoteNone = "none"
 
 func globalConfigPath() string { return filepath.Join(KgaiHome(), "config.json") }
 
 // LoadGlobalConfig reads <KgaiHome>/config.json. A missing file is an empty config.
-func LoadGlobalConfig() (GlobalConfig, error) {
-	var gc GlobalConfig
+func LoadGlobalConfig() (Settings, error) {
+	var gc Settings
 	b, err := os.ReadFile(globalConfigPath())
 	if os.IsNotExist(err) {
 		return gc, nil
@@ -43,7 +36,7 @@ func LoadGlobalConfig() (GlobalConfig, error) {
 }
 
 // SaveGlobalConfig writes <KgaiHome>/config.json, creating the home dir if needed.
-func SaveGlobalConfig(gc GlobalConfig) error {
+func SaveGlobalConfig(gc Settings) error {
 	if err := os.MkdirAll(KgaiHome(), 0o755); err != nil {
 		return err
 	}
@@ -54,24 +47,28 @@ func SaveGlobalConfig(gc GlobalConfig) error {
 	return os.WriteFile(globalConfigPath(), append(b, '\n'), 0o644)
 }
 
-// EffectiveRemote resolves the sync remote this store actually uses, and where it came
-// from: "local" (this store's kg.config.json), "global" (<KgaiHome>/config.json),
-// "disabled" (local remote is "none" — opted out), or "" when nothing is configured.
+// EffectiveRemote resolves the sync remote this store actually uses and where it came
+// from: a layer name (session/project/global), "disabled" when the winning layer set
+// the RemoteNone sentinel, or "" when nothing configured one anywhere. The receiver
+// may be nil — asking where a project WOULD sync must not require an initialized
+// store, let alone create one.
 func (s *Store) EffectiveRemote() (url, source string) {
-	switch local := s.Config.Remote; {
-	case local == RemoteNone:
-		return "", "disabled"
-	case local != "":
-		return local, "local"
-	}
-	gc, err := LoadGlobalConfig()
-	if err != nil || gc.Remote == "" {
+	layers, err := LoadLayers(s)
+	if err != nil {
 		return "", ""
 	}
-	return ExpandRemote(gc.Remote), "global"
+	val, src := Effective(layers, "remote")
+	switch val {
+	case "":
+		return "", ""
+	case RemoteNone:
+		return "", "disabled"
+	}
+	return ExpandRemote(val), src
 }
 
-// ExpandRemote fills the {project} placeholder with the project directory's name.
+// ExpandRemote fills the {project} placeholder with the project directory's name, so
+// one configured remote can give every project its own prefix.
 func ExpandRemote(remote string) string {
 	return strings.ReplaceAll(remote, "{project}", filepath.Base(ProjectRoot()))
 }

@@ -12,6 +12,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/auto-sync.sh\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/inject-prompt.sh\"",
+            "timeout": 10
           }
         ]
       }
