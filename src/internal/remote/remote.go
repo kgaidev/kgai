@@ -40,6 +40,25 @@ type Remote interface {
 //	s3://bucket/prefix          → S3 segment sync
 //	kgai://org/project          → kgai cloud (not yet available)
 //	anything else (or empty)    → git (empty = local commit only)
+//
+// DirectoryCommitter is implemented by transports that commit the STORE DIRECTORY
+// itself, where the store's .gitignore decides what gets sent. Callers that must know
+// whether the ignore rules matter ask the transport For() actually returned, rather than
+// re-deriving it from the URL: an empty URL reads as "no remote" to a URL classifier
+// while landing here on the git transport, which still runs `add -A` locally — two
+// classifications that can disagree, and did.
+type DirectoryCommitter interface {
+	CommitsStoreDirectory() bool
+}
+
+// CommitsStoreDirectory reports whether this transport sends the store directory (and so
+// depends on its ignore rules) — true for git, false for the object and cloud transports,
+// which upload event segments and never read the directory.
+func CommitsStoreDirectory(r Remote) bool {
+	dc, ok := r.(DirectoryCommitter)
+	return ok && dc.CommitsStoreDirectory()
+}
+
 func For(url string) (Remote, error) {
 	switch {
 	case strings.HasPrefix(url, "s3://"):

@@ -56,6 +56,10 @@ func (g *gitRemote) Sync(s *store.Store) (SyncResult, error) {
 	return res, nil
 }
 
+// CommitsStoreDirectory: this transport commits the store directory, so its .gitignore
+// is what keeps kg.config.json (the cloud token) out of what is sent.
+func (g *gitRemote) CommitsStoreDirectory() bool { return true }
+
 // commit stages and commits the log if there is anything to commit.
 func (g *gitRemote) commit(s *store.Store, msg string) error {
 	if _, err := git(s.Root, "add", "-A"); err != nil {

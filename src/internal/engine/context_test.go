@@ -223,6 +223,10 @@ func TestScaffoldFailureBlocksGitButNotObjectSync(t *testing.T) {
 	}{
 		{"/tmp/some-team-repo.git", true},
 		{"s3://team-bucket/kg", false},
+		// No remote configured still lands on the git transport, which runs `add -A`
+		// locally — a URL classifier calls that "none" and would skip the check, so the
+		// gate asks the transport remote.For actually returned.
+		{"", true},
 	} {
 		dir := t.TempDir() + "/store"
 		s, err := store.Init(dir, "test", c.remote)

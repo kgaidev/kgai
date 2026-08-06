@@ -501,13 +501,13 @@ func (e *Engine) syncLocked() (remote.SyncResult, int, []ConflictGroup, error) {
 	// Other transports never read the store directory — the object transport builds its
 	// payload from the shard's events — so refusing there would block a supported setup
 	// over a file that cannot affect it. Report it and carry on.
-	scaffoldErr := e.S.EnsureScaffold()
-	if scaffoldErr != nil && syncTransport(url) == "git" {
-		return remote.SyncResult{Remote: url}, 0, nil, fmt.Errorf("refusing to sync: %w — with a git remote the store's ignore rules are part of what keeps kg.config.json (your cloud token) out of the commit, and kgai will not sync a store whose scaffold it no longer controls. Restore or delete that file and run sync again", scaffoldErr)
-	}
 	r, err := remote.For(url)
 	if err != nil {
 		return remote.SyncResult{Remote: url}, 0, nil, err
+	}
+	scaffoldErr := e.S.EnsureScaffold()
+	if scaffoldErr != nil && remote.CommitsStoreDirectory(r) {
+		return remote.SyncResult{Remote: url}, 0, nil, fmt.Errorf("refusing to sync: %w — this transport commits the store directory, and its ignore rules are part of what keeps kg.config.json (your cloud token) out of what is sent; kgai will not sync a store whose scaffold it no longer controls. Restore or delete that file and run sync again", scaffoldErr)
 	}
 	before, err := e.S.ShardCounts()
 	if err != nil {
