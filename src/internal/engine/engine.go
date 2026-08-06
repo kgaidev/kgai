@@ -532,7 +532,12 @@ func (e *Engine) syncLocked() (remote.SyncResult, int, []ConflictGroup, error) {
 	if scaffoldErr != nil {
 		// Harmless for this transport, but still a store kgai no longer fully controls —
 		// and it would block a switch to a git remote.
-		sr.Detail = strings.TrimSpace(sr.Detail + " " + scaffoldErr.Error())
+		// " — ", not a space: both halves are complete sentences from different layers
+		// (the transport's and the store's), and neither can know it will be appended to
+		// the other. Joined bare they read as one broken clause — "committed locally only
+		// refusing to overwrite …" — which is the first thing an agent summarising a sync
+		// result sees.
+		sr.Detail = strings.TrimSpace(strings.Trim(sr.Detail, " ;") + " — " + scaffoldErr.Error())
 	}
 	return sr, n, conf, err
 }
