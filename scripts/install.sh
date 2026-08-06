@@ -281,8 +281,16 @@ report_ready() {
   # Background auto-sync runs silently; a persistent failure surfaces here, once
   # per session, instead of nagging on every turn. Soft failures (expired SSO,
   # offline) report ok:true with a detail, so check for either.
-  local lastsync
-  lastsync="$(project_root)/.kgai/store/last-autosync.json"
+  #
+  # ASK the engine where the store is. Guessing <project>/.kgai/store means the warning
+  # never fires for a store the `store` setting or KGAI_STORE moved — which is exactly
+  # the multi-repo setup where a silent sync failure costs the most.
+  local lastsync root
+  root="$( cd "$(project_root)" && KGAI_HOME="$KGAI_HOME" \
+      LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
+      DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" config 2>/dev/null |
+      sed -n 's/.*"store_root": *"\([^"]*\)".*/\1/p' )"
+  lastsync="${root:-$(project_root)/.kgai/store}/last-autosync.json"
   if [ -f "$lastsync" ] && grep -qE '"ok": *false|"detail":' "$lastsync" 2>/dev/null; then
     extra="${extra}⚠ background team sync did not sync on its last attempt — tell the user to run \`kg sync\` to see why. "
   fi
@@ -301,7 +309,7 @@ if [ -x "$BIN" ] && [ "$WANT" = "$HAVE" ]; then
   # and point at the one-line repair — reinstalling on its own would re-download the same
   # bytes that already do not run here.
   if ! engine_works; then
-    status "⚠️ ENGINE INSTALLED BUT NOT RUNNING — kgai will NOT work this session ($ENGINE_ERR). Fix: rm -rf \"$KGAI_HOME\" and start a new session to reinstall it."
+    status "⚠️ ENGINE INSTALLED BUT NOT RUNNING — kgai will NOT work this session ($ENGINE_ERR). Fix: rm -rf \"$KGAI_HOME/bin\" \"$KGAI_HOME/lib\" and start a new session to reinstall it (that is the engine only — $KGAI_HOME also holds your machine-wide config and approvals)."
     exit 0
   fi
   ensure_on_path
