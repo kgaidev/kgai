@@ -174,7 +174,7 @@ or not you approved:
   you approve can still shape what gets recorded — that is what they are for. Read them
   before approving; `kg trust --show` exists for that.
 - **One approval covers identical configurations.** If your standard `.kgairc` is public,
-  someone can copy it into their own repo; cloning that repo would then enrol it into your
+  someone can copy it into their own repo; cloning that repo would then enroll it into your
   shared store without asking, because it asks for exactly what you already accepted. It
   gains nothing beyond what you granted that configuration, but it is a real difference
   from per-file approval. Keep company store paths out of public repos, or approve per

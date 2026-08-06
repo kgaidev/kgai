@@ -459,7 +459,7 @@ func capPrompt(p string) string {
 	for cut > 0 && !utf8.ValidString(p[:cut]) {
 		cut--
 	}
-	return p[:cut] + "\n[truncated at " + strconv.Itoa(PromptMaxBytes) + " bytes — keep capture rules short and link out for detail]"
+	return p[:cut] + "\n[truncated at " + strconv.Itoa(PromptMaxBytes) + " bytes — keep capture rules short; link out for detail]"
 }
 
 // Effective resolves one key across the layers and names the layer it came from. An

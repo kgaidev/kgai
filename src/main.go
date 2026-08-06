@@ -590,6 +590,9 @@ func cmdConfig(args []string) error {
 		}
 		val := ""
 		if sub == "set" {
+			if err := rejectFlagAsValue("config set", fs, fs.Arg(1)); err != nil {
+				return err
+			}
 			if val, err = configValue(fs.Arg(1), *fromFile); err != nil {
 				return err
 			}
@@ -726,6 +729,27 @@ func rejectTrailingFlags(cmd string, args []string) error {
 		if len(a) > 1 && strings.HasPrefix(a, "-") {
 			return fmt.Errorf("%q looks like a flag but came after an argument, where it would be stored as a value instead of taking effect — put flags before the arguments (`kg %s %s …`)", a, cmd, a)
 		}
+	}
+	return nil
+}
+
+// rejectFlagAsValue guards the one position that may legitimately start with "-": a
+// capture rule written as a bullet list is an ordinary value, but `--from-file` in that
+// slot is somebody's misplaced flag, and storing it silently writes nonsense into a
+// COMMITTED file the whole team then clones and approves. Enumerated from the FlagSet,
+// so a flag added later is covered without anyone remembering this function.
+func rejectFlagAsValue(cmd string, fs *flag.FlagSet, val string) error {
+	if !strings.HasPrefix(val, "-") {
+		return nil
+	}
+	known := map[string]bool{}
+	fs.VisitAll(func(f *flag.Flag) { known["-"+f.Name], known["--"+f.Name] = true, true })
+	name := val
+	if i := strings.IndexAny(name, "= "); i > 0 {
+		name = name[:i]
+	}
+	if known[name] {
+		return fmt.Errorf("%q is a flag of this command but was written where the value goes, so it would be stored as the value — put it before the key: `kg %s %s … <key>`", val, cmd, val)
 	}
 	return nil
 }
