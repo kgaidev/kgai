@@ -249,6 +249,40 @@ func TestWorktreeReadsTheProjectConfigOfTheMainWorktree(t *testing.T) {
 // The regression this guards: a branch that edits .kgairc in its own worktree must not
 // move that worktree onto a different graph. Changes take effect once merged into the
 // main worktree, exactly like the store location itself.
+// A worktree created INSIDE the repo (<repo>/.worktrees/x — a common convention) is
+// still a worktree: an earlier guard only asked whether the working directory was under
+// the repo root, which this layout satisfies, so the branch's own .kgairc governed.
+func TestWorktreeNestedInsideTheRepoStillFollowsTheMainWorktree(t *testing.T) {
+	t.Setenv("KGAI_HOME", t.TempDir())
+	t.Setenv("KGAI_STORE", "")
+	root := newRepo(t)
+	shared := t.TempDir()
+	writeAndTrust(t, filepath.Join(root, ProjectConfigName), `{"store":"`+shared+`","prompt":"main rules"}`)
+	git(t, root, "add", "-A")
+	git(t, root, "commit", "-qm", "kgai config")
+
+	wt := filepath.Join(root, ".worktrees", "feature")
+	git(t, root, "worktree", "add", "-q", "-b", "nested", wt)
+	t.Cleanup(func() { git(t, root, "worktree", "remove", "--force", wt) })
+	// The branch rewrites the config in its own checkout.
+	writeAndTrust(t, filepath.Join(wt, ProjectConfigName), `{"store":"/tmp/nested-only-kg","prompt":"branch rules"}`)
+
+	t.Chdir(wt)
+	if got := ProjectConfigPath(); got != filepath.Join(root, ProjectConfigName) {
+		t.Errorf("config = %q, want the main worktree's %q", got, filepath.Join(root, ProjectConfigName))
+	}
+	if got := DefaultRoot(); got != shared {
+		t.Errorf("store = %q, want the one shared store %q", got, shared)
+	}
+	layers, err := LoadLayers(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val, _ := Effective(layers, "prompt"); val != "main rules" {
+		t.Errorf("prompt = %q, want the main worktree's rules", val)
+	}
+}
+
 func TestBranchLocalConfigDoesNotSplitTheGraph(t *testing.T) {
 	t.Setenv("KGAI_HOME", t.TempDir())
 	t.Setenv("KGAI_STORE", "")

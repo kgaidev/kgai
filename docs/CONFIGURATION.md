@@ -25,6 +25,14 @@ All three hold the same JSON shape; only the location decides the layer, the way
 layers `.npmrc`. The name follows the rc convention, the content is JSON — one schema
 across layers is the point.
 
+`.kgairc` is looked for at the repository root and **nowhere else** — no search upward
+from the working directory. One project has one config: a file in a subdirectory (or one
+carried by a vendored tree) would otherwise win over it and the same repo would resolve to
+two different stores depending on where the shell stood. The root is the *main* worktree's,
+so every `git worktree` of a project — including one nested at `<repo>/.worktrees/x` —
+reads the same file and records into the same graph. A change to it takes effect once it
+is merged and checked out there, exactly as the store itself ignores branches.
+
 ## Which key may live where
 
 This is enforced on **both** paths: a write to the wrong layer is refused, and a value

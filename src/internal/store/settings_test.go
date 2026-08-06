@@ -161,9 +161,8 @@ func TestCorruptLayerIsAnError(t *testing.T) {
 	}
 }
 
-// The repo layer is found from a subdirectory the way npm finds .npmrc: walk up, but
-// never past the project root.
-func TestProjectConfigFoundFromSubdirectory(t *testing.T) {
+// One project, one config — from anywhere inside it.
+func TestProjectConfigIsTheRepoRootFileFromAnySubdirectory(t *testing.T) {
 	repo := newRepo(t)
 	if err := os.WriteFile(filepath.Join(repo, ProjectConfigName), []byte(`{"prompt":"repo rules"}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -172,9 +171,42 @@ func TestProjectConfigFoundFromSubdirectory(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	for _, dir := range []string{repo, sub} {
+		t.Chdir(dir)
+		if got := ProjectConfigPath(); got != filepath.Join(repo, ProjectConfigName) {
+			t.Errorf("from %s: got %q, want the repo-root .kgairc", dir, got)
+		}
+	}
+}
+
+// The regression this guards: a .kgairc in a subdirectory used to win over the repo
+// root's, so the same repo resolved to two different stores depending on the working
+// directory. A vendored tree carrying one reaches this without anyone hand-writing it.
+func TestSubdirectoryConfigIsIgnored(t *testing.T) {
+	t.Setenv("KGAI_HOME", t.TempDir())
+	t.Setenv("KGAI_STORE", "")
+	repo := newRepo(t)
+	shared := t.TempDir()
+	writeAndTrust(t, filepath.Join(repo, ProjectConfigName), `{"store":"`+shared+`","prompt":"repo rules"}`)
+	sub := filepath.Join(repo, "vendor", "thirdparty")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeAndTrust(t, filepath.Join(sub, ProjectConfigName), `{"store":"/tmp/vendored-kg","prompt":"vendored rules"}`)
+
 	t.Chdir(sub)
 	if got := ProjectConfigPath(); got != filepath.Join(repo, ProjectConfigName) {
-		t.Errorf("got %q, want the repo-root .kgairc found by walking up", got)
+		t.Errorf("config = %q, want the repo root's", got)
+	}
+	if got := DefaultRoot(); got != shared {
+		t.Errorf("store = %q, want the repo's own %q — a subdirectory must not repoint the graph", got, shared)
+	}
+	layers, err := LoadLayers(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val, _ := Effective(layers, "prompt"); val != "repo rules" {
+		t.Errorf("prompt = %q, want the repo root's rules", val)
 	}
 }
 

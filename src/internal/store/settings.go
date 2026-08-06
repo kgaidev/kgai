@@ -440,42 +440,27 @@ func WriteLayer(name, path, key, val string) error {
 	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
-// ProjectConfigPath locates the committed repo config: the nearest .kgairc at or above
-// the working directory, bounded by the project root. When none exists it returns where
-// one would be created, so `kg config --project` always has somewhere to write.
+// ProjectConfigPath is the committed repo config: exactly <ProjectRoot()>/.kgairc, with
+// no search. One project, one file, whatever directory the session happens to run in.
 //
-// The anchor is ProjectRoot(), which maps a linked worktree back to the MAIN worktree —
+// Both halves of that are load-bearing, and each replaced a way the graph could split:
+//
+// NO WALK-UP from the working directory. A .kgairc in a subdirectory — hand-written, or
+// carried by a vendored tree that has no .git of its own — used to win over the repo
+// root's, so `kg ingest` from services/api wrote into a different store than the same
+// command from the top. One repository, two graphs, decided by where the shell stood.
+//
+// ANCHORED AT ProjectRoot(), which maps a linked worktree back to the MAIN worktree —
 // the same rule the store location follows, and they must agree. A worktree is a branch
-// checked out somewhere else, and the knowledge graph is branch-agnostic by design: if
-// the config were read from the checked-out tree, a branch that edits .kgairc `store`
-// would silently point that worktree at a different graph, and `kg` would answer
-// differently depending on which branch you happened to be standing in. So the copy in
-// the main worktree governs every worktree; a change to .kgairc takes effect once it is
-// merged and checked out there.
+// checked out somewhere else and the knowledge graph is branch-agnostic by design: read
+// from the checked-out tree, a branch editing `store` would point that worktree at
+// another graph. This holds for a worktree nested inside the repo (<repo>/.worktrees/x),
+// which an earlier "is the working directory under the root?" test let through.
+//
+// So a change to .kgairc takes effect once it is merged and checked out in the main
+// worktree, exactly as the store itself ignores branches.
 func ProjectConfigPath() string {
-	root := ProjectRoot()
-	start := projectStart()
-	// Only walk up when the working directory is genuinely inside the project root — in
-	// a linked worktree it is not, and the main worktree's file is the one that governs.
-	dir := start
-	if start != root && !strings.HasPrefix(start, root+string(os.PathSeparator)) {
-		dir = root
-	}
-	for {
-		p := filepath.Join(dir, ProjectConfigName)
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-			return p
-		}
-		if dir == root {
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return filepath.Join(root, ProjectConfigName)
+	return filepath.Join(ProjectRoot(), ProjectConfigName)
 }
 
 // projectStart is where the search begins: the session's working directory, or
