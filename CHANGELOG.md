@@ -110,8 +110,8 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   - **v1.2.0–v1.4.0** — sync rewrote the file every run, so a deleted or replaced one was
     restored before staging. Exposure required that rewrite to FAIL: an unwritable store
     directory (read-only mount, full disk, permissions), whose error was discarded.
-    Reproduced on a build of the v1.4.0 base. The v1.2.0 boundary itself is read-verified
-    (`EnsureScaffold` enters the sync path there), not built.
+    Reproduced on builds of v1.2.0 and of the v1.4.0 base: on both, a replaced or deleted
+    ignore file is restored and nothing leaks; only the read-only store directory does.
   - Before v0.1.3 there was no git transport, so nothing could be pushed.
 
   Silent in every case: sync reported success. Check the team repository with
