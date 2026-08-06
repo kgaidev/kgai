@@ -182,6 +182,11 @@ or not you approved:
 - **The agent can run `kg trust` if you tell it to.** The skill forbids doing it
   unprompted, and an unapproved file has no channel into the conversation to argue for
   itself — but if you say "approve it" without reading, it will.
+- **A store is one machine and one user.** `kg.config.json` is written 0600 and carries a
+  single install identity, so two people sharing one directory on a build box will hit
+  permission errors or one shard with two writers. Teams converge through the remote
+  (`kg sync`), not through a shared filesystem. A configured store that is not reachable
+  now says so in the empty answer instead of reading as "the team has no history".
 - **The first session on a new machine may miss the notice.** The hook needs the engine,
   which the same SessionStart group installs; if they run in parallel it exits silently
   and you see the notice from the next session on.

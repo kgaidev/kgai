@@ -170,23 +170,25 @@ func (st *Settings) Set(key, val string) error {
 // Errors are returned, never swallowed. Falling back to the per-project default on a
 // corrupt or unapproved .kgairc would put decisions in a store nobody reads — and
 // .kgairc is a committed file, so a conflicted merge is an ordinary way to get here.
-func StoreRootFromLayers() (string, error) {
+func StoreRootFromLayers() (string, string, error) {
 	project, projectTrusted, err := loadProjectLayer()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if project.StoreRoot != "" && projectTrusted {
-		return ExpandStorePath(project.StoreRoot)
+		root, err := ExpandStorePath(project.StoreRoot)
+		return root, LayerProject, err
 	}
 	var global Settings
 	var exists bool
 	if err := readSettings(globalConfigPath(), &global, &exists); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if global.StoreRoot != "" {
-		return ExpandStorePath(global.StoreRoot)
+		root, err := ExpandStorePath(global.StoreRoot)
+		return root, LayerGlobal, err
 	}
-	return "", nil
+	return "", "", nil
 }
 
 // loadProjectLayer reads <repo>/.kgairc, drops any key that may not live there, and

@@ -110,6 +110,11 @@ else, enroll repositories one at a time.
   branch-agnostic, so a branch must not be able to point its worktree at a different
   store. A change to `.kgairc` applies once it is merged and checked out in the main
   worktree.
+- **One store, one user, one machine.** `kg.config.json` is 0600 and holds a single
+  install identity, so several people on one box must not share a store directory — they
+  would collide on permissions or write one shard from two processes. Give each person
+  their own store and let `kg sync` merge them; that is what the append-only shards are
+  for.
 - **`paths` properties become ambiguous.** `kg context --paths "src/billing/*"` matches
   on the pattern recorded with the element, and two repos may both have `src/`. In a
   merged store, record repo-qualified patterns (`billing/src/*`) so path lookup stays

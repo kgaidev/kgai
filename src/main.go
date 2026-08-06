@@ -141,7 +141,21 @@ func openRead() (*engine.Engine, error) {
 }
 
 func noStoreNote() string {
-	return fmt.Sprintf("no knowledge graph store at %s — nothing recorded for this project yet. The store is created automatically by the first recorded decision (kg ingest) or by kg init.", store.DefaultRoot())
+	root, source, err := store.ResolveRootWithSource()
+	if err != nil {
+		return err.Error()
+	}
+	if source != "" {
+		// A store someone deliberately pointed at is missing. Saying "nothing recorded
+		// yet" here reads as "the team has no history", which is how an agent ends up
+		// telling the user their graph is empty when it is merely unreachable.
+		where := "the " + source + " layer"
+		if source == "KGAI_STORE" {
+			where = "KGAI_STORE"
+		}
+		return fmt.Sprintf("no knowledge graph store at %s, which is where %s says this project's store lives. Either nothing has been recorded there yet, or that path is not reachable from this machine (a shared store that is not mounted, a path that does not exist, no permission) — check before concluding the project has no history.", root, where)
+	}
+	return fmt.Sprintf("no knowledge graph store at %s — nothing recorded for this project yet. The store is created automatically by the first recorded decision (kg ingest) or by kg init.", root)
 }
 
 // noStore emits the empty result for a read command against a missing store: the

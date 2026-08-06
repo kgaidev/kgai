@@ -309,3 +309,25 @@ func TestBranchLocalConfigDoesNotSplitTheGraph(t *testing.T) {
 		t.Errorf("prompt from the worktree = %q, want the main worktree's %q", val, "repo rules")
 	}
 }
+
+// An enrolled repo whose store cannot be reached here — a shared volume that is not
+// mounted, a path that does not exist on this machine — must not read as "the team has
+// no history". Writes already fail loudly; the empty READ is the dangerous one, because
+// the agent reports it as fact.
+func TestConfiguredStoreNamesItselfInTheEmptyAnswer(t *testing.T) {
+	t.Setenv("KGAI_HOME", t.TempDir())
+	t.Setenv("KGAI_STORE", "")
+	repoWithConfig(t, `{"store":"/nonexistent-root/kgai"}`)
+	root, source, err := ResolveRootWithSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != "/nonexistent-root/kgai" || source != LayerProject {
+		t.Errorf("got (%q, %q), want the configured path and the layer that set it", root, source)
+	}
+	// And an unconfigured project must keep saying nothing special.
+	repoWithConfig(t, "")
+	if _, source, _ := ResolveRootWithSource(); source != "" {
+		t.Errorf("source = %q for a default store, want empty", source)
+	}
+}

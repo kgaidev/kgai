@@ -146,7 +146,7 @@ func DefaultRoot() string {
 	// The `store` setting from the repo's .kgairc or this machine's config.json —
 	// how several repositories share one graph without every developer exporting
 	// KGAI_STORE by hand. The environment still wins, so a one-off override works.
-	if v, err := StoreRootFromLayers(); err == nil && v != "" {
+	if v, _, err := StoreRootFromLayers(); err == nil && v != "" {
 		return v
 	}
 	return filepath.Join(ProjectRoot(), ".kgai", "store")
@@ -157,17 +157,26 @@ func DefaultRoot() string {
 // swapped for the per-project default — recording into a store nobody reads is worse
 // than refusing to record.
 func ResolveRoot() (string, error) {
+	root, _, err := ResolveRootWithSource()
+	return root, err
+}
+
+// ResolveRootWithSource also names what decided the location: "KGAI_STORE", a layer
+// name, or "" for the per-project default. Callers use it to tell "nothing recorded
+// here yet" (the default, an ordinary state) apart from "the store this repo is
+// configured to use is not there" (which reads as the same empty answer and is not).
+func ResolveRootWithSource() (string, string, error) {
 	if v := os.Getenv("KGAI_STORE"); v != "" {
-		return v, nil
+		return v, "KGAI_STORE", nil
 	}
-	v, err := StoreRootFromLayers()
+	v, source, err := StoreRootFromLayers()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if v != "" {
-		return v, nil
+		return v, source, nil
 	}
-	return filepath.Join(ProjectRoot(), ".kgai", "store"), nil
+	return filepath.Join(ProjectRoot(), ".kgai", "store"), "", nil
 }
 
 // KgaiHome is the stable runtime/store home for kgai.
