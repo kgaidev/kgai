@@ -100,11 +100,13 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 ### Fixed
 - **Sync cannot commit the cloud token, even when the store's ignore file is wrong.**
   **Upgrading with a git remote: check for a leaked token.** Every version through v1.4.0
-  could commit `kg.config.json` — which holds the cloud token — when the store's
-  `.gitignore` was *missing* and the store directory could not be written at sync time
-  (read-only mount, full disk, permissions), because the ignore file could not be restored
-  and the failure was discarded. Reproduced on a build of the v1.4.0 base. Rare, but
-  silent: sync reported success. Check the team repository with
+  could commit `kg.config.json` — which holds the cloud token — if the store's
+  `.gitignore` was missing at sync time, and how easily depends on the version:
+  **v0.1.3–v1.1.0** wrote that file only at `kg init` and never refreshed it, so a deleted
+  or lost ignore file was enough; **v1.2.0–v1.4.0** restore it during sync, so exposure
+  also required the store directory to be unwritable then (read-only mount, full disk,
+  permissions), because the restore failed and the failure was discarded. Both reproduced,
+  on builds of v1.1.0 and of the v1.4.0 base. Silent either way: sync reported success. Check the team repository with
   `git log --all --name-only | grep kg.config.json`; if it appears, rotate the token —
   untracking does not remove it from history. A second route, through a *replaced*
   ignore file, was introduced and fixed inside this cycle and never shipped: released

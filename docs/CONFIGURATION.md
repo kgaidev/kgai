@@ -167,9 +167,8 @@ or not you approved:
   removed from the repository's current tree, not from its history, so what an earlier
   sync pushed stays in the commits that carried it — in practice the graph cache and
   possibly the native library. If `kg.config.json` ever appears there — which versions
-  through v1.4.0 could commit when the ignore file was missing and could not be rewritten
-  — the cloud token in it must be rotated: untracking does not touch history. And an
-  **S3**
+  through v1.4.0 could commit when the store's ignore file was missing at sync time — the
+  cloud token in it must be rotated: untracking does not touch history. And an **S3**
   store never commits the directory at all, so nothing untracks a file a previous git
   remote left tracked — harmless, since nothing is pushed from there either, but it stays
   in the local repo until you run `git rm --cached` in it yourself.
