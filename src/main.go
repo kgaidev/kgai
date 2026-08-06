@@ -553,7 +553,13 @@ func cmdConfig(args []string) error {
 		if err := rejectTrailingFlags("config get", fs.Args()); err != nil {
 			return err
 		}
-		return getConfig(fs.Arg(0), *raw)
+		// A scope on `get` asks a different question: not "what is in effect" but
+		// "what does THIS layer hold" — which is how you check what a clone inherits.
+		scoped := ""
+		if *session || *project || *global {
+			scoped = scope
+		}
+		return getConfig(fs.Arg(0), *raw, scoped)
 	case "set", "unset":
 		if err := rejectTrailingFlags("config "+sub, fs.Args()); err != nil {
 			return err
@@ -802,7 +808,7 @@ func showConfig() error {
 	return nil
 }
 
-func getConfig(key string, raw bool) error {
+func getConfig(key string, raw bool, layer string) error {
 	if key == "" {
 		return fmt.Errorf("get needs a key — one of: %s", strings.Join(store.SettingKeys, ", "))
 	}
@@ -813,6 +819,20 @@ func getConfig(key string, raw bool) error {
 		return err
 	}
 	val, source := store.Effective(layers, key)
+	if layer != "" {
+		// Report that layer alone, empty included — "the project layer sets nothing" is
+		// exactly the answer someone is looking for when they ask this way.
+		val, source = "", layer
+		for _, l := range layers {
+			if l.Name == layer {
+				v, err := l.Settings.Get(key)
+				if err != nil {
+					return err
+				}
+				val = v
+			}
+		}
+	}
 	pending := ""
 	for _, l := range layers {
 		if l.Pending {
@@ -1066,7 +1086,7 @@ ADMIN
                experimental (untested). --auto is the background mode the
                plugin hooks fire: silent no-op without a store/remote, honors
                a cooldown, never blocks on the store lock
-  config [get|set|unset] [--session|--project|--global] [--raw] [KEY] [VALUE|-]
+  config [show|get|set|unset] [--session|--project|--global] [--raw] [KEY] [VALUE|-]
                layered configuration, most specific first:
                  session  <store>/kg.config.json   this install (default scope)
                  project  <repo>/.kgairc           committed — the repo's default
@@ -1076,6 +1096,8 @@ ADMIN
                — syncing belongs to the store, never to a committed file),
                cloud_url (session only, beside the token it authenticates with).
                No args shows every layer, each effective value and its source.
+               "get KEY" answers with the effective value; "get --project KEY"
+               answers with what THAT layer holds — what a clone of this repo inherits.
                VALUE of "-" reads stdin; --from-file F reads a file
   trust [--show|--revoke|--list]
                approve this repo's committed .kgairc. It arrives with a clone, from
