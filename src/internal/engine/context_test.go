@@ -171,3 +171,37 @@ func TestContextAttachesWhyToTheRightElementsAfterTruncation(t *testing.T) {
 		}
 	}
 }
+
+// Export is the replay-determinism check, and `shapes` is the part of it that records
+// which decision shaped which element. A Cypher alias that shadowed the node variables
+// made the query fail silently, so every export carried "shapes": null and the digest
+// could not detect a divergence in decision→element attribution at all.
+func TestExportIncludesShapes(t *testing.T) {
+	s, err := store.Init(t.TempDir()+"/store", "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(s)
+	if _, err := e.Ingest(IngestInput{Decisions: []DecisionInput{{
+		Title: "Payments split out",
+		Mutations: []MutationInput{
+			{Op: "upsert_element", Kind: "feature", Name: "Payments", Props: map[string]FlexString{"paths": "src/pay/*"}},
+		},
+	}}}, false); err != nil {
+		t.Fatal(err)
+	}
+	out, err2 := e.Export(true)
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	if len(out.Shapes) == 0 {
+		t.Fatal("export carries no shapes — the decision→element edges are missing from the determinism check")
+	}
+	row := out.Shapes[0]
+	if row["decision"] == nil || row["element"] == nil {
+		t.Errorf("shape row = %v, want a decision and an element id", row)
+	}
+	if out.Digest == "" {
+		t.Error("canonical export must carry a digest")
+	}
+}

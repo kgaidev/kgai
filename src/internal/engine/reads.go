@@ -587,7 +587,13 @@ func (e *Engine) Export(canonical bool) (ExportResult, error) {
 	out.Elements, _ = g.Raw(`MATCH (e:Element) RETURN e.id AS id, e.kind AS kind, e.name AS name, e.props AS props ORDER BY e.id`)
 	out.Decisions, _ = g.Raw(`MATCH (d:Decision) RETURN d.id AS id, d.title AS title, d.lamport AS lamport ORDER BY d.id`)
 	out.Links, _ = g.Raw(`MATCH (a:Element)-[r:LINK]->(b:Element) RETURN a.id AS f, r.kind AS k, b.id AS t ORDER BY f,k,t`)
-	out.Shapes, _ = g.Raw(`MATCH (d:Decision)-[:SHAPES]->(e:Element) RETURN d.id AS d, e.id AS e ORDER BY d,e`)
+	// The aliases must not shadow the node variables: `RETURN d.id AS d` rebinds d to a
+	// string, and ORDER BY then sorts by the NODE, which Kuzu refuses ("Cannot order by
+	// d. Order by NODE is not supported") — so this silently returned nothing and every
+	// export carried "shapes": null. That is the one part of the dump that records which
+	// decision shaped which element, so the replay-determinism digest could not detect a
+	// divergence in exactly the relationship the graph is built on.
+	out.Shapes, _ = g.Raw(`MATCH (d:Decision)-[s:SHAPES]->(el:Element) RETURN d.id AS decision, el.id AS element, s.authority AS authority ORDER BY decision, element`)
 	if canonical {
 		b, _ := json.Marshal(out)
 		sum := sha256.Sum256(b)

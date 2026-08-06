@@ -92,6 +92,12 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   out here rather than buried in the layering work that caused it.
 
 ### Fixed
+- **`kg export` carries the decision→element edges again.** The `shapes` query aliased
+  `d.id AS d` over its own node variable, so Kuzu refused the ORDER BY and the query
+  failed silently: every export said `"shapes": null`. That is the part of the dump
+  recording which decision shaped which element, so the canonical digest — the
+  replay-determinism check — could not detect a divergence in the relationship the whole
+  graph is built on.
 - **The `kg` launcher reaches your terminal's PATH on macOS.** v1.4.0 decided whether
   `~/.local/bin` needed a profile line by looking at the PATH of the process running the
   hook. That is Claude Code's environment, not your Terminal's: it already carries
