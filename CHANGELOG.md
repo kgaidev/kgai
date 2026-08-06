@@ -98,7 +98,11 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   out here rather than buried in the layering work that caused it.
 
 ### Fixed
-- **Sync cannot commit the cloud token, even when the store's ignore file is wrong.** The
+- **Sync cannot commit the cloud token, even when the store's ignore file is wrong.**
+  If you are upgrading and any store synced with a damaged or replaced `.gitignore`, check
+  its team repository for `kg.config.json` in the history (`git log --all --name-only`):
+  earlier versions staged whatever the ignore file did not cover, and that file holds the
+  cloud token. Untracking does not remove it from history — rotate the token. The
   store's `.gitignore` is what keeps `kg.config.json` out of what sync commits, and this
   release taught the scaffold to refuse overwriting a `.gitignore` kgai did not write —
   but sync discarded that error and pushed anyway, so a store whose ignore file had been
