@@ -162,6 +162,14 @@ or not you approved:
   (`!kg.config.json`, `!graph.kuzu`). Those are dropped at the next sync, along with any
   conflict markers a merge left behind. S3 remotes never read it: they upload event
   segments, not the directory.
+  If an earlier sync already committed something the scaffold excludes, a **git** sync
+  untracks it on the next run — you do not have to. Two caveats worth knowing: it is
+  removed from the repository's current tree, not from its history, so anything already
+  pushed stays in the commits that carried it (a cloud token that reached a remote must be
+  rotated, not just untracked); and an **S3** store never commits the directory at all, so
+  nothing untracks a file that a previous git remote left tracked — harmless, since
+  nothing is pushed from that directory either, but it stays in the local repo until you
+  run `git rm --cached` there yourself.
 - **The store never overwrites files it did not write.** Its scaffold (`.gitignore`,
   `.gitattributes`) refuses to replace a file without kgai's own marker.
 - **A broken or conflicted `.kgairc` stops the command** instead of quietly resolving to
