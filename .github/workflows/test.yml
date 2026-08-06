@@ -28,6 +28,7 @@ jobs:
             name: windows (git bash)
     name: installer — ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - name: Shell version
@@ -36,10 +37,14 @@ jobs:
       - name: The install itself
         shell: bash
         run: bash tests/install-flow.sh
+      # !cancelled() so one suite's failure still runs the others — all three report in a
+      # single run instead of surfacing one platform bug at a time.
       - name: PATH wiring
+        if: ${{ !cancelled() }}
         shell: bash
         run: bash tests/install-path.sh
       - name: Shell-profile safety
+        if: ${{ !cancelled() }}
         shell: bash
         run: bash tests/install-rc-safety.sh
 
@@ -53,6 +58,7 @@ jobs:
     name: installer — bash 3.2 (macOS shell)
     runs-on: ubuntu-latest
     container: bash:3.2
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - name: Prepare (curl for file:// downloads, bash in /bin)
@@ -63,8 +69,10 @@ jobs:
       - name: The install itself
         run: bash tests/install-flow.sh
       - name: PATH wiring
+        if: ${{ !cancelled() }}
         run: bash tests/install-path.sh
       - name: Shell-profile safety
+        if: ${{ !cancelled() }}
         run: bash tests/install-rc-safety.sh
 
   go:

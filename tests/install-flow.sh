@@ -52,12 +52,18 @@ t_fresh_install() {
   assert_has "and the user is told how to use it" "$OUT" "/kgai:kg-ask"
 }
 
-# The whole point: a user who runs one session can then use kg in their own terminal.
+# The whole point: a user who runs one session can then use kg in their own terminal. The
+# shell must be started the way THIS platform's terminal starts it — a login shell on macOS
+# and Git Bash (reads .bash_profile, where install.sh puts the line), a non-login
+# interactive shell on Linux (reads .bashrc). Using -ic everywhere passed on Linux but
+# failed on the macOS runner, because a non-login shell there never reads the .bash_profile
+# the line correctly went into.
 t_fresh_install_is_usable_in_a_new_terminal() {
   make_release "$(host_release_os)" "$(host_release_arch)"
   run_installer
-  local out
-  out="$(env -i "HOME=$SB" "PATH=/usr/bin:/bin" "$BASH_BIN" -ic \
+  local out flags
+  case "$(uname -s)" in Darwin|MINGW*|MSYS*|CYGWIN*) flags="-lic" ;; *) flags="-ic" ;; esac
+  out="$(env -i "HOME=$SB" "PATH=/usr/bin:/bin" "$BASH_BIN" $flags \
           'kg version' 2>/dev/null </dev/null | tail -n1)"
   assert_has "a fresh terminal runs kg through the launcher" "$out" '"ok":true'
 }

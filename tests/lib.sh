@@ -20,7 +20,13 @@ BASH_BIN="${BASH:-$(command -v bash)}"
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
 
-TMPROOT="$(mktemp -d "${TMPDIR:-/tmp}/kgai-tests.XXXXXX")"
+# Strip a trailing slash off TMPDIR before composing the path: macOS sets TMPDIR to
+# `/var/folders/.../T/` (with the slash), so `${TMPDIR}/kgai-tests` would contain `//`.
+# A sandbox path with `//` then fails to equal what `cd … && pwd` reports (the kernel
+# collapses the `//`), which is exactly what made the project-root assertions fail on the
+# macOS CI runner while passing on Linux.
+_TMPBASE="${TMPDIR:-/tmp}"; _TMPBASE="${_TMPBASE%/}"
+TMPROOT="$(mktemp -d "$_TMPBASE/kgai-tests.XXXXXX")"
 trap 'rm -rf "$TMPROOT"' EXIT
 
 T=0; PASSED=0; FAILED=0; SKIPPED=0
