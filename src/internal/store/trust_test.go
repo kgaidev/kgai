@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -342,5 +343,45 @@ func TestConfigAskingForNothingNeedsNoApproval(t *testing.T) {
 	}
 	if _, err := Trust(path); err == nil {
 		t.Error("approving a config that asks for nothing should say so, not record an empty approval")
+	}
+}
+
+// A committed file is hand-written and long-lived: writing one key must not throw away
+// the rest of it, and a typo must not be silent.
+func TestWritingOneKeyPreservesTheRestOfTheFile(t *testing.T) {
+	t.Setenv("KGAI_HOME", t.TempDir())
+	dir := t.TempDir()
+	path := filepath.Join(dir, ProjectConfigName)
+	original := `{"_comment":"company standard, see wiki/kgai","prompt":"old rules","future_key":42}`
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteLayer(LayerProject, path, "prompt", "new rules"); err != nil {
+		t.Fatal(err)
+	}
+	raw := map[string]any{}
+	b, _ := os.ReadFile(path)
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["prompt"] != "new rules" {
+		t.Errorf("prompt = %v, want the new value", raw["prompt"])
+	}
+	if raw["_comment"] == nil {
+		t.Error("the annotation was deleted — JSON has no comments, so _comment is how people write one")
+	}
+	if raw["future_key"] == nil {
+		t.Error("a key written by a newer version was deleted; an older plugin must not strip it")
+	}
+}
+
+func TestTypoedKeyIsReported(t *testing.T) {
+	repoAt(t, `{"stor":"/opt/shared-kg","_note":"not a typo, an annotation"}`)
+	layers, err := LoadLayers(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layers[1].Unknown) != 1 || layers[1].Unknown[0] != "stor" {
+		t.Errorf("unknown keys = %v, want [stor] — a typo must be visible, and _note must not be", layers[1].Unknown)
 	}
 }

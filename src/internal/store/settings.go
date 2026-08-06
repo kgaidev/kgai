@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -339,6 +340,11 @@ type Layer struct {
 	// from, when this one is covered by that approval rather than its own. Reported
 	// once so an inherited approval is visible rather than silent.
 	InheritedFrom string `json:"approval_inherited_from,omitempty"`
+	// Unknown lists keys in the file that kgai does not recognize. A typo like "stor"
+	// otherwise does exactly nothing, quietly, and the whole team stays unenrolled
+	// while the file looks right. Keys starting with "_" are treated as annotations
+	// (JSON has no comments) and are not reported.
+	Unknown []string `json:"unknown_keys,omitempty"`
 }
 
 // LoadLayers reads all three layers in precedence order (most specific first). The
@@ -360,6 +366,7 @@ func LoadLayers(s *Store) ([]Layer, error) {
 		return nil, err
 	}
 	if project.Exists {
+		project.Unknown = unknownKeysIn(project.Path)
 		for _, key := range SettingKeys {
 			if v, _ := onFile.Get(key); v != "" && !keyAllowedIn(key, LayerProject) {
 				project.Ignored = append(project.Ignored, key)
@@ -383,12 +390,39 @@ func LoadLayers(s *Store) ([]Layer, error) {
 	if err := readSettings(global.Path, &global.Settings, &global.Exists); err != nil {
 		return nil, err
 	}
+	if global.Exists {
+		global.Unknown = unknownKeysIn(global.Path)
+	}
 	// The session layer holds `store` only in a hand-edited or legacy file, where it
 	// could never take effect (that file lives inside the store). Blank it so the
 	// resolver and `kg config` cannot disagree about which layer decided.
 	session.Settings.StoreRoot = ""
 
 	return []Layer{session, project, global}, nil
+}
+
+// unknownKeysIn lists keys a pure-Settings file holds that this version does not know.
+// "_"-prefixed keys are annotations and are skipped.
+func unknownKeysIn(path string) []string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	raw := map[string]json.RawMessage{}
+	if json.Unmarshal(b, &raw) != nil {
+		return nil
+	}
+	var out []string
+	for k := range raw {
+		if strings.HasPrefix(k, "_") {
+			continue
+		}
+		if _, known := keyLayers[k]; !known {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func readSettings(path string, into *Settings, exists *bool) error {
@@ -430,14 +464,43 @@ func WriteLayer(name, path, key, val string) error {
 	if err := st.Set(key, val); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	// Keep everything else the file already held. Marshalling Settings alone would drop
+	// any key this version does not know — including "_comment", which is how people
+	// annotate a JSON file that has no comments, and including a key written by a newer
+	// version, so one teammate on an older plugin would silently strip the other's.
+	merged := map[string]json.RawMessage{}
+	if exists {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(b, &merged); err != nil {
+			return fmt.Errorf("corrupt %s: %w", path, err)
+		}
 	}
-	b, err := json.MarshalIndent(st, "", "  ")
+	known, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	own := map[string]json.RawMessage{}
+	if err := json.Unmarshal(known, &own); err != nil {
+		return err
+	}
+	for _, k := range SettingKeys {
+		if v, ok := own[k]; ok {
+			merged[k] = v
+		} else {
+			delete(merged, k) // cleared: omitempty dropped it, so drop it from the file too
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	out, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0o644)
 }
 
 // ProjectConfigPath is the committed repo config: exactly <ProjectRoot()>/.kgairc, with
