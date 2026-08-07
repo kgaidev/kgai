@@ -18,8 +18,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The workflow only reads the repo; nothing here may write to it.
+permissions:
+  contents: read
+
 jobs:
   installer:
+    # A same-repo PR already ran on the branch push — running both doubles every CI
+    # minute, including the macOS runner. Fork PRs (no push event here) still run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     strategy:
       fail-fast: false
       matrix:
@@ -32,7 +39,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      # Pinned by commit SHA, not by tag: tags move, and a moved tag is exactly how a
+      # compromised action reaches every workflow that trusts it.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Shell version
         shell: bash
         run: bash --version | head -n1
@@ -49,6 +58,10 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: bash tests/install-rc-safety.sh
+      - name: Repo hygiene
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: bash tests/repo-hygiene.sh
 
   # macOS ships bash 3.2, whose ${var//…} backslash handling and here-doc parsing differ
   # from bash 4+/5 in ways that already broke both the quoting code and a whole suite. The
@@ -58,11 +71,12 @@ jobs:
   # minimal PATH can resolve the launcher's `#!/usr/bin/env bash`.
   bash32:
     name: installer — bash 3.2 (macOS shell)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     container: bash:3.2
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Prepare (curl for file:// downloads, bash in /bin)
         run: |
           apk add --no-cache curl >/dev/null
@@ -79,10 +93,11 @@ jobs:
 
   go:
     name: engine unit tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: 'src/go.mod'
           cache-dependency-path: src/go.sum

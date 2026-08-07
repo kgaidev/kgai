@@ -10,7 +10,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.."
 
 FAILED_SUITES=""
-for suite in tests/install-flow.sh tests/install-path.sh tests/install-rc-safety.sh; do
+for suite in tests/install-flow.sh tests/install-path.sh tests/install-rc-safety.sh \
+             tests/repo-hygiene.sh; do
   printf '\n═══ %s ═══\n' "$suite"
   bash "$suite" "$@" || FAILED_SUITES="$FAILED_SUITES $suite"
 done
