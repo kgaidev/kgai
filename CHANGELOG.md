@@ -84,7 +84,7 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   supersession and conflicts are, the read-before/record-after flow, what belongs in the
   log and what does not, where files live, and the JSON output contract. An agent that
   runs `kg help` without the skill loaded now gets enough to use the tool correctly.
-- **127 tests for the installer, run on Linux, macOS and Git Bash — and on bash 3.2.**
+- **127 tests for the installer, run on Linux and macOS — and on bash 3.2.**
   `bash tests/run.sh`, and in CI on every push. Three suites, none of which touches the
   network, the real `$HOME` or the real `/etc`:
   - `tests/install-flow.sh` (31) — the whole script, run the way the SessionStart hook
@@ -234,8 +234,9 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   new one is created only when none exists.
 - **Windows says what it is instead of "unsupported platform".** Claude Code runs these
   hooks through Git Bash, where `uname` reports `MINGW64_NT-…`; there is no native engine
-  for it, and the message now says so and points at WSL. Git Bash is also the third
-  platform the new test suite runs on, so the PATH logic stays correct there.
+  for it, and the message now says so and points at WSL. The refusal and the Git-Bash PATH
+  logic are covered by the test suite on the Linux/macOS runners with a shadowed `uname`
+  (there is no windows-latest CI job — Windows is not a supported target).
 - **Sync cannot commit the cloud token, even when the store's ignore file is wrong.**
   **Upgrading with a git remote: check for a leaked token.** Every version whose config
   holds a cloud token — v0.1.4, where `cloud_token` was introduced, through v1.4.0 —

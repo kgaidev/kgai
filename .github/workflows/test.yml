@@ -2,9 +2,13 @@ name: tests
 
 # The installer is the one part of the plugin whose bugs are invisible on the machine that
 # writes it: every platform has a different login shell, a different profile file and a
-# different idea of what a terminal is. So the suites run everywhere, on every push —
-# including Windows, where the engine is not supported but Claude Code still executes
-# these hooks through Git Bash.
+# different idea of what a terminal is. So the suites run on Linux and macOS, and — because
+# macOS ships bash 3.2 whose quirks broke things silently — a dedicated bash 3.2 job too.
+#
+# There is no windows-latest job: Windows is not a supported target (the installer refuses
+# Git Bash, where uname reports MINGW*), the hosted windows runner would not allocate for
+# this repo anyway, and the refusal + the Git-Bash PATH logic are already covered on the
+# Linux/macOS runners by shadowing `uname` (see tests/install-flow.sh t_windows_*).
 #
 # The suites need no network: they install from a fake release served over file://.
 
@@ -24,8 +28,6 @@ jobs:
             name: linux
           - runner: macos-14
             name: macos (bash 3.2, zsh login shell)
-          - runner: windows-latest
-            name: windows (git bash)
     name: installer — ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15

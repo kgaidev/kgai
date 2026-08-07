@@ -142,7 +142,7 @@ store-wide `flock` so concurrent sessions never corrupt the single-writer cache.
 | `src/internal/engine` | resolution, ingest, rebuild, context scoring, history/as-of/conflicts/search/doctor/export |
 | `src/main.go` | `kg` CLI (JSON I/O) |
 | `scripts/` | `fetch-libs.sh` (native lib), `install.sh` (idempotent engine install) |
-| `tests/` | installer test suites (`run.sh`: install flow, PATH wiring, shell-profile safety) — no network, sandbox `$HOME`; CI runs them on Linux/macOS/Git Bash |
+| `tests/` | installer test suites (`run.sh`: install flow, PATH wiring, shell-profile safety) — no network, sandbox `$HOME`; CI runs them on Linux, macOS, and bash 3.2 |
 | `bin/kg` | PATH shim for Claude Code's Bash tool → stable `~/.kgai` engine |
 | `~/.local/bin/kg` | launcher written by `install.sh` → same engine, for the user's own terminal |
 | `<store>/.gitignore` | machinery: with a git remote it decides what sync sends. kgai keeps it correct — added lines survive, ones that would break sync or expose the config are dropped |
