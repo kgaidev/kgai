@@ -35,10 +35,15 @@ import (
 // out of nowhere.
 const trustFileName = "trusted.json"
 
-// TrustRecord is one approved configuration.
+// TrustRecord is one decided configuration. A record is APPROVED when ApprovedAt is set
+// (its store and rules take effect) and DISMISSED when only DismissedAt is set (the user
+// has seen it and chosen not to approve — the pending prompt stops, but the file still
+// decides nothing). Approving a dismissed configuration promotes it and clears the
+// dismissal; `kg trust --revoke` deletes the record either way, re-arming the prompt.
 type TrustRecord struct {
-	ApprovedAt string   `json:"approved_at"`
-	Paths      []string `json:"paths"`
+	ApprovedAt  string   `json:"approved_at,omitempty"`
+	DismissedAt string   `json:"dismissed_at,omitempty"`
+	Paths       []string `json:"paths"`
 }
 
 func trustPath() string { return filepath.Join(KgaiHome(), trustFileName) }
@@ -97,6 +102,10 @@ func FingerprintOf(path string) (string, error) {
 type TrustState struct {
 	// Trusted is false while the configuration is waiting for a person to accept it.
 	Trusted bool
+	// Dismissed is true when the user has seen the configuration and chosen not to
+	// approve it: it still decides nothing (Trusted stays false), but it is no longer
+	// pending — the prompt is silenced. Trusted and Dismissed are never both true.
+	Dismissed bool
 	// InheritedFrom names the repo this exact configuration was first approved from,
 	// when the approval did not come from this path. Empty when it was approved here,
 	// or when nothing is approved. Callers announce it once and then Ack it.
@@ -120,7 +129,11 @@ func TrustStateOf(path string) (TrustState, error) {
 	}
 	rec, ok := m[fp]
 	if !ok {
-		return TrustState{Fingerprint: fp}, nil
+		return TrustState{Fingerprint: fp}, nil // pending: not seen, not approved
+	}
+	if rec.ApprovedAt == "" {
+		// Recorded but not approved → dismissed: silence the prompt, decide nothing.
+		return TrustState{Dismissed: true, Fingerprint: fp}, nil
 	}
 	st := TrustState{Trusted: true, Fingerprint: fp}
 	abs := absOrSelf(path)
@@ -168,15 +181,46 @@ func recordPath(fp, abs string) error {
 	if err != nil {
 		return err
 	}
-	rec, ok := m[fp]
-	if !ok {
-		rec = TrustRecord{ApprovedAt: time.Now().UTC().Format(time.RFC3339)}
+	rec := m[fp]
+	if rec.ApprovedAt == "" {
+		rec.ApprovedAt = time.Now().UTC().Format(time.RFC3339)
 	}
+	// Approving supersedes any prior dismissal of the same configuration.
+	rec.DismissedAt = ""
 	if !contains(rec.Paths, abs) {
 		rec.Paths = append(rec.Paths, abs)
 	}
 	m[fp] = rec
 	return saveTrust(m)
+}
+
+// Dismiss records that the user has seen the configuration at path and chosen not to
+// approve it, so the pending prompt stops — without approving it (its store and rules
+// still do not apply). Bound to the fingerprint like approval: a later change to the file
+// asks again. Returns the fingerprint, or an error if the file asks for nothing.
+func Dismiss(path string) (string, error) {
+	fp, err := FingerprintOf(path)
+	if err != nil {
+		return "", err
+	}
+	if fp == "" {
+		return "", fmt.Errorf("%s asks for nothing that needs a decision", path)
+	}
+	m, err := loadTrust()
+	if err != nil {
+		return "", err
+	}
+	rec := m[fp]
+	// Approving is strictly stronger; never downgrade an approval to a dismissal.
+	if rec.ApprovedAt == "" {
+		rec.DismissedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	abs := absOrSelf(path)
+	if !contains(rec.Paths, abs) {
+		rec.Paths = append(rec.Paths, abs)
+	}
+	m[fp] = rec
+	return fp, saveTrust(m)
 }
 
 // Untrust withdraws approval for the configuration this path carries — everywhere, since
@@ -197,8 +241,29 @@ func Untrust(path string) (bool, error) {
 	return true, saveTrust(m)
 }
 
-// TrustedConfigs lists every approved configuration and where it was accepted from.
+// TrustedConfigs lists every configuration on record — approved and dismissed alike — and
+// where each was accepted from. Callers that must distinguish the two use DecidedConfigs.
 func TrustedConfigs() (map[string]TrustRecord, error) { return loadTrust() }
+
+// DecidedConfigs splits the recorded configurations into approved (ApprovedAt set, their
+// store and rules take effect) and dismissed (only DismissedAt set, inert but silenced).
+// `kg trust --list` reports them separately, so a dismissed config is never counted or
+// labelled as approved.
+func DecidedConfigs() (approved, dismissed map[string]TrustRecord, err error) {
+	m, err := loadTrust()
+	if err != nil {
+		return nil, nil, err
+	}
+	approved, dismissed = map[string]TrustRecord{}, map[string]TrustRecord{}
+	for fp, rec := range m {
+		if rec.ApprovedAt != "" {
+			approved[fp] = rec
+		} else {
+			dismissed[fp] = rec
+		}
+	}
+	return approved, dismissed, nil
+}
 
 func saveTrust(m map[string]TrustRecord) error {
 	if err := os.MkdirAll(KgaiHome(), 0o755); err != nil {

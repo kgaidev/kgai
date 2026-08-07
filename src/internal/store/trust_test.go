@@ -100,6 +100,202 @@ func TestEditingTheConfigRevokesApproval(t *testing.T) {
 	}
 }
 
+// Dismissing is the third state: the user has seen the config and chosen not to approve
+// it. It must stop the pending prompt (Pending=false) while still deciding nothing
+// (Trusted=false) — otherwise a user who does not want a repo's config is nagged forever.
+func TestDismissSilencesThePromptWithoutApproving(t *testing.T) {
+	repo := repoAt(t, `{"store":"`+t.TempDir()+`","prompt":"repo rules"}`)
+	path := filepath.Join(repo, ProjectConfigName)
+	if _, err := Dismiss(path); err != nil {
+		t.Fatal(err)
+	}
+	st, err := TrustStateOf(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Trusted {
+		t.Error("a dismissed config must not be trusted — it decides nothing")
+	}
+	if !st.Dismissed {
+		t.Error("a dismissed config must report Dismissed")
+	}
+	layers, err := LoadLayers(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layers[1].Pending {
+		t.Error("a dismissed config must NOT be pending — the prompt is silenced")
+	}
+	if !layers[1].Dismissed {
+		t.Error("the layer must report the dismissal for `kg config` to surface")
+	}
+	if val, _ := Effective(layers, "prompt"); val != "" {
+		t.Errorf("prompt = %q, want nothing — a dismissed file still decides nothing", val)
+	}
+}
+
+// Approving a dismissed config promotes it: the store and rules take effect, and the
+// dismissal is gone.
+func TestApprovingADismissedConfigPromotesIt(t *testing.T) {
+	repo := repoAt(t, `{"store":"`+t.TempDir()+`","prompt":"repo rules"}`)
+	path := filepath.Join(repo, ProjectConfigName)
+	if _, err := Dismiss(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Trust(path); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := TrustStateOf(path)
+	if !st.Trusted || st.Dismissed {
+		t.Errorf("after approving a dismissed config: %+v, want trusted and not dismissed", st)
+	}
+	layers, _ := LoadLayers(nil)
+	if val, src := Effective(layers, "prompt"); val != "repo rules" || src != LayerProject {
+		t.Errorf("got (%q, %q), want the approved rules live", val, src)
+	}
+}
+
+// Dismissing an approved config must not downgrade it — approval is strictly stronger.
+func TestDismissDoesNotDowngradeAnApproval(t *testing.T) {
+	repo := repoAt(t, `{"prompt":"repo rules"}`)
+	path := filepath.Join(repo, ProjectConfigName)
+	if _, err := Trust(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Dismiss(path); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := IsTrusted(path); !ok {
+		t.Error("an approved config must stay approved after a stray --dismiss")
+	}
+}
+
+// A changed file asks again, even after a dismissal — the dismissal was of the OLD
+// content, exactly as approval is.
+func TestDismissalDoesNotSurviveAnEdit(t *testing.T) {
+	repo := repoAt(t, `{"prompt":"repo rules"}`)
+	path := filepath.Join(repo, ProjectConfigName)
+	if _, err := Dismiss(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"prompt":"different rules"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := TrustStateOf(path)
+	if st.Dismissed {
+		t.Error("a dismissal must not carry over to changed content")
+	}
+	if st.Trusted {
+		t.Error("changed content is neither approved nor dismissed — it is pending")
+	}
+	layers, _ := LoadLayers(nil)
+	if !layers[1].Pending {
+		t.Error("edited-after-dismiss must prompt again")
+	}
+}
+
+// Revoke clears a dismissal too, re-arming the prompt.
+func TestRevokeReArmsADismissedConfig(t *testing.T) {
+	repo := repoAt(t, `{"prompt":"repo rules"}`)
+	path := filepath.Join(repo, ProjectConfigName)
+	if _, err := Dismiss(path); err != nil {
+		t.Fatal(err)
+	}
+	had, err := Untrust(path)
+	if err != nil || !had {
+		t.Fatalf("Untrust = (%v, %v), want (true, nil) — a dismissal is a record to withdraw", had, err)
+	}
+	st, _ := TrustStateOf(path)
+	if st.Dismissed {
+		t.Error("revoke must clear the dismissal")
+	}
+	layers, _ := LoadLayers(nil)
+	if !layers[1].Pending {
+		t.Error("after revoke the config must prompt again")
+	}
+}
+
+// `kg trust --list` must not count or label a dismissed config as approved: dismissed
+// records share trusted.json but are a different, inert state. DecidedConfigs splits them.
+func TestDecidedConfigsSeparatesApprovedFromDismissed(t *testing.T) {
+	t.Setenv("KGAI_HOME", t.TempDir())
+	a, b := t.TempDir(), t.TempDir()
+	pathA, pathB := filepath.Join(a, ProjectConfigName), filepath.Join(b, ProjectConfigName)
+	if err := os.WriteFile(pathA, []byte(`{"prompt":"approved rules"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pathB, []byte(`{"prompt":"dismissed rules"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Trust(pathA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Dismiss(pathB); err != nil {
+		t.Fatal(err)
+	}
+	approved, dismissed, err := DecidedConfigs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(approved) != 1 || len(dismissed) != 1 {
+		t.Fatalf("approved=%d dismissed=%d, want 1 and 1", len(approved), len(dismissed))
+	}
+	// The one under `approved` must be the trusted one, and it must carry approved_at.
+	for _, r := range approved {
+		if r.ApprovedAt == "" {
+			t.Error("a record in the approved set has no approved_at")
+		}
+	}
+	for _, r := range dismissed {
+		if r.ApprovedAt != "" {
+			t.Error("a record in the dismissed set is actually approved")
+		}
+	}
+}
+
+// Approving a config that was pending relocates the store (local → the team store it asks
+// for). The condition that warns about the stranded local log — the store moved and the
+// old one holds decisions — must hold, so the approve path can report it as
+// `kg config set store` does.
+func TestApprovingRelocatesTheStoreAndSeesTheStrandedLog(t *testing.T) {
+	teamStore := t.TempDir()
+	repo := repoAt(t, `{"store":"`+teamStore+`","prompt":"repo rules"}`)
+	path := filepath.Join(repo, ProjectConfigName)
+
+	// While pending, the store resolves local. Simulate decisions recorded there.
+	before, err := ResolveRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != filepath.Join(repo, ".kgai", "store") {
+		t.Fatalf("pending store = %q, want the local per-project store", before)
+	}
+	if err := os.MkdirAll(filepath.Join(before, "log"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(before, "log", "i1.ndjson"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !HasEvents(before) {
+		t.Fatal("the local store should report events after a log was written")
+	}
+
+	if _, err := Trust(path); err != nil {
+		t.Fatal(err)
+	}
+	after, err := ResolveRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == before {
+		t.Error("approving a config with a team store must relocate the store")
+	}
+	// The exact condition the approve handler warns on.
+	if !(after != before && HasEvents(before)) {
+		t.Errorf("stranded-log condition not met: before=%q after=%q hasEvents=%v", before, after, HasEvents(before))
+	}
+}
+
 func TestUntrustWithdrawsApproval(t *testing.T) {
 	repo := repoAt(t, `{"prompt":"repo rules"}`)
 	path := filepath.Join(repo, ProjectConfigName)

@@ -629,20 +629,29 @@ func cmdConfig(args []string) error {
 func cmdTrust(args []string) error {
 	fs := flag.NewFlagSet("trust", flag.ContinueOnError)
 	show := fs.Bool("show", false, "print what the file asks for without approving it")
-	revoke := fs.Bool("revoke", false, "withdraw approval for the configuration this repo asks for")
-	list := fs.Bool("list", false, "list every configuration approved on this machine")
+	revoke := fs.Bool("revoke", false, "withdraw approval (or dismissal) for the configuration this repo asks for")
+	list := fs.Bool("list", false, "list every configuration decided on this machine (approved and dismissed, separately)")
 	ack := fs.Bool("ack", false, "record that this repo uses an already-approved configuration (announced once)")
+	dismiss := fs.Bool("dismiss", false, "stop prompting for this repo's config without approving it (its store and rules still do not apply)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	path := store.ProjectConfigPath()
 	if *list {
-		recs, err := store.TrustedConfigs()
+		approved, dismissed, err := store.DecidedConfigs()
 		if err != nil {
 			return err
 		}
-		emit(map[string]any{"trusted": recs, "count": len(recs),
-			"note": "approval is per CONFIGURATION, not per repo: `paths` says where each was accepted from, and every repo asking for the same thing is covered"})
+		// `trusted`/`count` are the approved set only — a dismissed config is inert and
+		// must never be counted or shown as approved. Dismissed configs are reported under
+		// their own key so the state is visible without conflating the two.
+		out := map[string]any{"trusted": approved, "count": len(approved),
+			"note": "approval is per CONFIGURATION, not per repo: `paths` says where each was accepted from, and every repo asking for the same thing is covered"}
+		if len(dismissed) > 0 {
+			out["dismissed"] = dismissed
+			out["dismissed_count"] = len(dismissed)
+		}
+		emit(out)
 		return nil
 	}
 	if *ack {
@@ -659,7 +668,32 @@ func cmdTrust(args []string) error {
 			return err
 		}
 		emit(map[string]any{"path": path, "revoked": had,
-			"note": "that configuration no longer decides anything on this machine — including in other repos that asked for the same thing; `kg trust` re-approves it"})
+			"note": "that configuration no longer decides anything on this machine — including in other repos that asked for the same thing; `kg trust` approves it, and it prompts again from the next session"})
+		return nil
+	}
+
+	if *dismiss {
+		fp, err := store.FingerprintOf(path)
+		if err != nil {
+			return err
+		}
+		if fp == "" {
+			return fmt.Errorf("no %s asking for anything in this repository — there is nothing to dismiss", path)
+		}
+		ts, err := store.TrustStateOf(path)
+		if err != nil {
+			return err
+		}
+		if ts.Trusted {
+			emit(map[string]any{"path": path, "dismissed": false, "already_approved": true,
+				"note": "this configuration is already approved — nothing to dismiss; `kg trust --revoke` withdraws it"})
+			return nil
+		}
+		if _, err := store.Dismiss(path); err != nil {
+			return err
+		}
+		emit(map[string]any{"path": path, "dismissed": true,
+			"note": "the approval prompt is silenced on this machine; this config still decides nothing until `kg trust`. A later change to the file asks again, and `kg trust --revoke` re-arms the prompt"})
 		return nil
 	}
 
@@ -708,6 +742,11 @@ func cmdTrust(args []string) error {
 		emit(out)
 		return nil
 	}
+	// Approving can move the store (a pending/dismissed config resolved to the local
+	// <repo>/.kgai/store; approving switches to the team store it asks for). Decisions
+	// recorded meanwhile are still on disk in the old store, just not read from the new
+	// one — say so, the same note `kg config set store` gives for the same move.
+	before, _ := store.ResolveRoot()
 	fp, err := store.Trust(path)
 	if err != nil {
 		return err
@@ -715,6 +754,10 @@ func cmdTrust(args []string) error {
 	out["approved"] = true
 	out["fingerprint"] = fp
 	out["note"] = "approved for this machine; any later change to the file asks again"
+	if after, err := store.ResolveRoot(); err == nil && after != before && store.HasEvents(before) {
+		out["previous_store"] = before
+		out["note"] = fmt.Sprintf("approved for this machine. Decisions recorded while this config was not yet approved are in the previous store at %s and are not visible from the approved store — to carry them over, copy its log/*.ndjson into %s/log/ and run `kg rebuild` (docs/SHARED-STORE.md). Any later change to the file asks again.", before, after)
+	}
 	emit(out)
 	return nil
 }
@@ -857,6 +900,12 @@ func showConfigWithNote(extra string) error {
 		if l.Pending {
 			out["pending_approval"] = l.Path
 			out["note"] = "this repo's .kgairc has not been approved on this machine, so it decides nothing yet — `kg trust --show` prints what it asks for, `kg trust` approves it"
+		}
+		if l.Dismissed {
+			// Not pending (the prompt is silenced), but this is the command you run to
+			// find out why the repo's config is not in effect — so it must say so.
+			out["dismissed"] = l.Path
+			out["note"] = "this repo's .kgairc was dismissed on this machine (`kg trust --dismiss`), so it decides nothing and no longer prompts — `kg trust` approves it, `kg trust --revoke` re-arms the prompt"
 		}
 		if l.InheritedFrom != "" {
 			out["approval_inherited_from"] = l.InheritedFrom

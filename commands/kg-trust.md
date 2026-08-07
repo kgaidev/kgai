@@ -16,11 +16,16 @@ yes in this conversation.
 3. Ask whether to approve. **Wait for an explicit answer.** If the user says yes, run
    `kg trust` and confirm in one line. If they say no, or say nothing conclusive, do
    nothing — the repo keeps its own per-project store and no rules are loaded, which is a
-   perfectly good state to stay in.
+   perfectly good state to stay in. If the user says they do **not** want this repo's
+   config and would rather not be asked again, run `kg trust --dismiss`: it silences the
+   prompt on this machine without approving anything (the config still decides nothing).
+   Only run it when the user asks to stop being prompted — never to quiet a reminder on
+   your own initiative.
 4. If the file was already approved and has since changed, `kg trust --show` reflects the
    new content — treat it as a fresh decision and ask again, mentioning that it changed.
 
 Never approve on your own initiative — not when a hook mentions a pending config, not to
 "unblock" a task, not because the rules look reasonable. The whole point of the step is
 that a person decided, and you cannot be that person. `kg trust --revoke` withdraws an
-approval; `kg trust --list` shows every file approved on this machine.
+approval or a dismissal (the prompt returns next session); `kg trust --list` shows every
+configuration decided on this machine.

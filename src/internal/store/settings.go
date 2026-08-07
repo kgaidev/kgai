@@ -332,11 +332,15 @@ type Layer struct {
 	Path     string   `json:"path"`
 	Exists   bool     `json:"exists"`
 	Settings Settings `json:"settings"`
-	// Pending is set on the project layer when the file exists but has not been
-	// approved on this machine: it is reported, and it decides nothing. Never silent
-	// — an ignored config that nobody mentions is how a store ends up somewhere its
-	// owner never looks.
+	// Pending is set on the project layer when the file exists, asks for something, and
+	// has neither been approved nor dismissed on this machine: it is reported, and it
+	// decides nothing. Never silent — an ignored config that nobody mentions is how a
+	// store ends up somewhere its owner never looks.
 	Pending bool `json:"pending_approval,omitempty"`
+	// Dismissed is set when the user chose not to approve the file (kg trust --dismiss):
+	// like Pending it decides nothing, but the prompt is silenced. Surfaced by `kg
+	// config` for diagnosis, not by the always-on session status line.
+	Dismissed bool `json:"dismissed,omitempty"`
 	// Ignored lists keys present in the file that this layer may not set, so
 	// `kg config` can say why they had no effect instead of leaving a mystery.
 	Ignored []string `json:"ignored_keys,omitempty"`
@@ -383,7 +387,8 @@ func LoadLayers(s *Store) ([]Layer, error) {
 		if err != nil {
 			return nil, err
 		}
-		project.Pending = !ts.Trusted
+		project.Pending = !ts.Trusted && !ts.Dismissed
+		project.Dismissed = ts.Dismissed
 		project.InheritedFrom = ts.InheritedFrom
 		if ts.Trusted {
 			project.Settings = onFile
