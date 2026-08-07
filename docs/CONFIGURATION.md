@@ -72,9 +72,15 @@ is like `registry`.
 
 `.kgairc` is the one layer nobody on this machine wrote. Until it is approved:
 
-- its `store` is ignored — the project keeps its own `<project>/.kgai/store`
+- its `store` is ignored — and while the decision is still pending, the local
+  `<project>/.kgai/store` is **not created yet either**: creating it now would leave a
+  stray store the moment you approve the team store instead. It is created by the
+  approval (the team store) or lazily by the first recorded decision if you work without
+  approving.
 - its capture rules are **not** injected into the session
-- `kg config`, `kg prompt` and the session hook all report `pending_approval`
+- `kg config`, `kg prompt` and the SessionStart prompt hook all report `pending_approval`
+  — and the installer's own session status line says so every session, so you are told
+  plainly even if nothing else surfaces it
 
 Nothing is blocked meanwhile. You keep working; you just do not get the repo's settings.
 
@@ -91,9 +97,15 @@ By hand it is the same flow:
 ```bash
 kg trust --show    # what this repo's config asks for; approves nothing
 kg trust           # approve
-kg trust --revoke  # withdraw
-kg trust --list    # every configuration approved on this machine
+kg trust --dismiss # don't want it: keep the local store, and stop prompting
+kg trust --revoke  # withdraw an approval or a dismissal (re-arms the prompt)
+kg trust --list    # every configuration decided on this machine
 ```
+
+If you do not want the repo's settings, `kg trust --dismiss` records that decision so you
+are not prompted again — the config still decides nothing (the project keeps its own local
+store), but the reminder stops. A later change to the file asks again, exactly as approval
+does; `kg trust --revoke` re-arms the prompt.
 
 ### What exactly is approved
 
@@ -111,7 +123,9 @@ asking for the same thing** — a company that standardizes one `.kgairc` across
 repos is asked once per machine, including for repos created later. When a repo becomes
 live that way, it is announced once (`approval_inherited_from`) and then stays quiet:
 an inherited approval nobody mentions is indistinguishable from no approval at all.
-`kg trust --revoke` withdraws the configuration everywhere it was inherited.
+`kg trust --revoke` withdraws the configuration everywhere it was inherited. A dismissal
+(`kg trust --dismiss`) is bound to the same fingerprint, so dismissing one repo's config
+also stops the prompt in every other repo that asks for exactly the same thing.
 
 ### Where approvals are stored, and why not in the repo
 

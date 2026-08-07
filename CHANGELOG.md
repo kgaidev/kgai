@@ -4,6 +4,66 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [1.5.1] - 2026-08-07
+
+### Added
+- **`kg trust --dismiss` — dismiss a committed `.kgairc` you don't want, and stop being
+  prompted.** A repo cloned with a committed config prompts for approval every session
+  until you decide. If you do not want its store and rules, dismissing records that
+  decision: the config still takes effect on nothing (the project keeps its own local
+  store), but the reminder stops. It is bound to the file's fingerprint exactly as approval
+  is, so a later change asks again, dismissing one repo's config quiets every other repo
+  asking for the same thing, and `kg trust --revoke` re-arms the prompt. `kg config` still
+  reports the dismissal (so "why isn't the repo's config in effect" has an answer), and
+  `kg trust --list` reports approved and dismissed configurations separately (a dismissed
+  one is never counted as approved); the always-on session status line stays silent. The
+  agent offers it only when you say you do not want the config — never on its own
+  initiative, the same rule as approval.
+
+### Changed
+- **A pending `.kgairc` no longer gets a local store created underneath it.** The
+  SessionStart installer used to run `kg init` regardless, so a repo whose committed
+  config points at a team store got a local `<repo>/.kgai/store` built at the first
+  session — a stray the moment you approved the team store instead. Store creation is now
+  deferred while the approval is pending: it is made by the approval (the team store) or
+  lazily by the first recorded decision if you work without approving (or after
+  `kg trust --dismiss`, which keeps the local store). Read commands still create nothing.
+- **The installer surfaces a pending approval in its own status line, every session.** The
+  reminder no longer depends solely on the agent reading the SessionStart prompt hook: the
+  installer itself says a `.kgairc` is awaiting approval on this machine (on both the fast
+  path and a fresh install), so a user who does not know they have anything to approve is
+  told plainly rather than left with a repo whose store and rules never take effect. Paired
+  with the deferral above so the quieter store behaviour can never become a silent no-op.
+  It covers any `.kgairc` you have not approved here, including one you wrote yourself, so
+  it no longer describes the file as having arrived with the repo. Enrolling a repo in a
+  shared store therefore takes a `kg trust` on the author's machine as well — the step the
+  README recipe was missing, and now shows.
+- **Approving a config that moved the store says where the earlier decisions went.** If you
+  recorded decisions while a `.kgairc` was pending (they went to the local store) and then
+  `kg trust` switches to the team store it asks for, the approval now reports the previous
+  store and how to carry its log over — the same note `kg config set store` already gives
+  for the same move, so the earlier decisions are not silently left unread.
+- **Session start reads the engine's config once.** The pending-approval work needed it in
+  three places (store check, status note, sync warning); they share one read, so surfacing
+  the approval costs a session nothing extra. A repo with an approval waiting is now
+  cheaper to start than before, because the store it does not need is no longer built.
+
+### Tests
+- Go: `kg trust --dismiss` across the store package — a dismissed config is not trusted and
+  not pending, approving one promotes it, a stray dismiss never downgrades an approval, an
+  edit or `--revoke` re-arms the prompt; `DecidedConfigs` keeps approved and dismissed
+  apart; approving a config that relocates the store meets the stranded-log condition.
+  Installer suite: a pending `.kgairc` defers `kg init` and is surfaced in the status line,
+  while a normal repo still initialises; a dismissed one does neither — no prompt, and the
+  local store the user kept by dismissing is created as for any ordinary repo.
+  The suite now drives the installer against the answers the real engine actually returns,
+  so those cases exercise the reading the installer does rather than a simplified
+  stand-in.
+- Reverting any fix above turns exactly one case red. Two smaller guarantees still have no
+  test that would notice if they broke: that approving clears an earlier dismissal, and
+  that a stray `--dismiss` cannot downgrade an approval. Both hold. Green on bash 5.2 and
+  bash 3.2.
+
 ## [1.5.0] - 2026-08-07
 
 ### Added

@@ -115,7 +115,10 @@ The store is **per-project** and everything is picked up automatically — it is
 to the project's `.gitignore`); your name on recorded decisions comes from
 `git config user.name`. Read commands never create a store: where nothing has been
 recorded they answer with an empty result and a note instead of minting a stray empty
-graph. To set it up explicitly up front:
+graph. The one exception is a repo shipping a committed `.kgairc` you have not yet decided
+on: while that approval is pending the local store is **not** created either, so approving
+its team store later does not leave a stray one behind (see
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md)). To set it up explicitly up front:
 
 ```bash
 cd your-project
@@ -233,11 +236,16 @@ never approves on its own initiative, whatever the file says. By hand it is:
 ```bash
 kg trust --show    # what this repo's config asks for — approves nothing
 kg trust           # approve it on this machine
-kg trust --revoke  # withdraw
+kg trust --dismiss # don't want it: stop being prompted (keeps the local store)
+kg trust --revoke  # withdraw an approval or a dismissal
 ```
 
 Until then `kg config` reports it as `pending_approval` and the session says so instead
-of loading the rules — nothing is blocked meanwhile, the project just keeps its own store.
+of loading the rules — nothing is blocked meanwhile, and the project's own local store is
+not created until you decide (approve → the team store; keep working → it is made lazily
+by your first recorded decision), so approving later does not leave a stray one behind.
+Don't want the repo's config at all? `kg trust --dismiss` records that so you are not
+asked again.
 What you approve is what the file **asks for** — the values of `prompt` and `store` —
 not its bytes: reformatting it asks nothing new, changing a rule asks again, and one
 approval covers every repo asking for the same thing (a company standard is accepted once
@@ -278,10 +286,17 @@ shared log once, commit it, and every clone follows without any per-developer se
 
 ```bash
 kg config set --project store '${HOME}/kgai'   # this repo joins the shared graph
+kg trust                                       # approve it here too — writing a .kgairc
+                                               # does not approve it, not even for its author
 git add .kgairc && git commit -m "kgai: record into the shared company graph"
 # on every machine that clones it, once:
 kg trust                                       # approve what the repo asks for
 ```
+
+Approval is per machine and per configuration, so the author approves once as well. Skip
+that second line and your own repo stays pending: every session says an approval is
+waiting, and the `store` you just set does not apply — decisions keep going to the local
+store until you accept the file.
 
 `${HOME}`, `~` and repo-relative paths keep the committed value portable across
 machines. Repos you never enroll keep their own log, so a side project never lands in
