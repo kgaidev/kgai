@@ -722,13 +722,59 @@ run_engine() {
   return "$rc"
 }
 
+# `kg config` once per run, memoised. Session start reads it for three things — the
+# pending-approval path (ensure_store and the status note) and the store root (the sync
+# warning) — and each is a native-lib process spawn through run_engine. The config cannot
+# change between those reads within one run, so one call answers all of them.
+_CONFIG_CACHE=""
+_CONFIG_CACHED=0
+engine_config() {
+  [ "$_CONFIG_CACHED" = 1 ] && { printf '%s' "$_CONFIG_CACHE"; return 0; }
+  _CONFIG_CACHE="$(run_engine config 2>/dev/null)"
+  _CONFIG_CACHED=1
+  printf '%s' "$_CONFIG_CACHE"
+}
+
+# The path of a committed .kgairc that is waiting for approval on this machine, or empty.
+# `kg config` reports it at top level as a quoted string; a per-layer `"pending_approval":
+# true` boolean is deliberately NOT matched (the pattern requires a quoted value).
+kgairc_pending_path() {
+  engine_config |
+    grep -o '"pending_approval":[[:space:]]*"[^"]*"' | head -n1 |
+    sed 's/.*"\([^"]*\)"$/\1/'
+}
+
 ensure_store() {
   # Create the store once, if the engine says there isn't one. ASK the engine rather
   # than testing <project>/.kgai/store: the store may be configured elsewhere entirely
   # (the `store` setting, KGAI_STORE — several repos sharing one graph), and a path
   # guessed here would re-init on every session and miss the shared store completely.
+  #
+  # But NOT while a committed .kgairc is awaiting approval. Its `store` is ignored until
+  # `kg trust`, so `kg init` now would build the LOCAL fallback store — and the moment the
+  # user approves the team store instead, that local <repo>/.kgai/store is a stray nobody
+  # reads. Defer: the store is created by the trust decision (approve → the team store),
+  # or lazily by the first recorded decision if the user works without approving. The
+  # status line (below) tells them approval is waiting, so this is not a silent no-op.
+  [ -n "$(kgairc_pending_path)" ] && return 0
   run_engine status | grep -q '"initialized": *false' || return 0
   run_engine init >/dev/null 2>&1 || true
+}
+
+# The one status-line note that does not depend on the agent reading the inject-prompt
+# hook: surfaced by the installer itself, every session, until the .kgairc is approved —
+# so a user who does not know they have anything to approve is told plainly, rather than
+# left with a repo whose team store and rules never take effect. Empty when nothing is
+# pending.
+#
+# It does NOT say the file is "committed", however typical that is: the engine reports a
+# pending approval for any unapproved .kgairc — untracked, uncommitted, or outside a git
+# repo entirely — and the person who WROTE one is in exactly that state until they approve
+# it here. Telling that user their repo shipped them something to approve is false, and it
+# is the reading that sends them looking for a config they already know about.
+pending_kgairc_note() {
+  [ -n "$(kgairc_pending_path)" ] || return 0
+  printf '%s' "⚠ this repo has a \`.kgairc\` awaiting your approval on this machine — its store and capture rules do NOT apply until you run /kgai:kg-trust (\`kg trust --show\` shows what it asks for); until then decisions go to this project's local store. "
 }
 
 # An installed file is not a working engine. `kg version` is the cheapest command that
@@ -772,7 +818,7 @@ engine_works() {
 # where a silent sync failure costs the most.
 autosync_warning() {
   local lastsync root
-  root="$(run_engine config | sed -n 's/.*"store_root": *"\([^"]*\)".*/\1/p')"
+  root="$(engine_config | sed -n 's/.*"store_root": *"\([^"]*\)".*/\1/p')"
   lastsync="${root:-$(project_root)/.kgai/store}/last-autosync.json"
   if [ -f "$lastsync" ] && grep -qE '"ok": *false|"detail":' "$lastsync" 2>/dev/null; then
     printf '%s' "⚠ background team sync did not sync on its last attempt — tell the user to run \`kg sync\` to see why. "
@@ -781,8 +827,14 @@ autosync_warning() {
 
 report_ready() {
   ensure_on_path
+  # Prime the config cache in THIS shell: the readers below run in command-substitution
+  # subshells, which inherit the cache but cannot populate it back here — so priming in
+  # the parent is what collapses ensure_store + the note + the sync warning to one spawn.
+  engine_config >/dev/null 2>&1
   ensure_store
-  local extra="$PATH_NOTE"
+  # Pending-approval first: it is the one thing that, unaddressed, leaves the repo's store
+  # and rules inert — the user needs to see it before anything else.
+  local extra="$(pending_kgairc_note)$PATH_NOTE"
   if ! echo "$WANT" 2>/dev/null > "$KGAI_HOME/.srcver"; then
     # Without the fingerprint every later session decides the engine is out of date and
     # downloads it again — that gets said once, here, instead of silently paid at every
@@ -839,12 +891,15 @@ if [ -x "$BIN" ] && [ "$WANT" = "$HAVE" ]; then
     exit 0
   fi
   ensure_on_path
+  # Prime the config cache in this shell (see report_ready) so the three readers below
+  # share one `kg config` spawn instead of three.
+  engine_config >/dev/null 2>&1
   ensure_store
-  # The sync warning has to live here too: this is the path a normal session takes (the
-  # engine is current), and report_ready — where it used to live alone — is only reached
-  # by a session that installs or updates the engine. So the one thing it exists to tell
-  # you was told approximately never.
-  note="$PATH_NOTE$(autosync_warning)"
+  # The sync warning and the pending-approval note have to live here too: this is the path
+  # a normal session takes (the engine is current), and report_ready — where they would
+  # otherwise live alone — is only reached by a session that installs or updates the
+  # engine. So the things they exist to tell you were told approximately never.
+  note="$(pending_kgairc_note)$PATH_NOTE$(autosync_warning)"
   [ -n "$note" ] && status "$note"
   exit 0
 fi

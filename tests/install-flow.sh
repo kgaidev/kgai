@@ -361,6 +361,82 @@ t_existing_store_is_left_alone() {
   assert_file_hasnt "an initialised store is not re-inited" "$SB/engine.log" "init"
 }
 
+# A .kgairc awaiting approval must NOT get a local store created underneath it: its own
+# `store` is ignored until `kg trust`, so an eager `kg init` now would leave a stray
+# <repo>/.kgai/store the moment the user approves the team store instead.
+t_pending_kgairc_defers_store_init() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  run_installer "KGTEST_INITIALIZED=false" "KGTEST_PENDING=$SB/proj/.kgairc"
+  assert_file_hasnt "no store is initialised while .kgairc is pending" "$SB/engine.log" "init"
+}
+
+# ...and the deferral is not silent: the installer's own status line tells the user, every
+# session, that approval is waiting — the one prompt that does not depend on the agent
+# reading the inject-prompt hook.
+t_pending_kgairc_is_prompted_in_status() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  run_installer "KGTEST_PENDING=$SB/proj/.kgairc"
+  assert_has "the pending approval is surfaced in the status line" "$OUT" ".kgairc"
+  assert_has "and points at the command that resolves it" "$OUT" "kg-trust"
+  # The engine reports a pending approval for ANY unapproved .kgairc — untracked,
+  # uncommitted, or outside a git repo — so the person who WROTE one sees this note until
+  # they approve it here. Telling them the repo shipped it is false for exactly that user.
+  assert_hasnt "and does not claim the file arrived committed" "$OUT" "committed"
+}
+
+# The pending path is read out of the engine's real output shape, where `layers` sorts
+# before `pending_approval` and so the per-layer BOOLEAN reaches the pattern first. A
+# pattern that accepted an unquoted value would return "true" — non-empty, so the note and
+# the deferral would still look correct, and the extraction would be silently wrong.
+t_pending_path_is_the_path_not_the_boolean() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  load
+  local eng="$SB/release/kg-$(host_release_os)-$(host_release_arch)"
+  local rc="$SB/proj/.kgairc" out first
+
+  # The hazard only exists if the fixture reproduces it. Assert that first, so a fake
+  # engine that drifts back to a single-line shape fails here loudly instead of leaving
+  # the extraction assertions below to pass without testing anything.
+  out="$(KGTEST_PENDING="$rc" "$eng" config)"
+  first="$(printf '%s\n' "$out" | grep 'pending_approval' | head -n1)"
+  assert_has "the per-layer boolean reaches the pattern first" "$first" "true"
+  assert_has "and the top-level value is the quoted path" "$out" "\"pending_approval\": \"$rc\""
+
+  # engine_config memoises per run; each case below is a separate run.
+  run_engine() { KGTEST_PENDING="$rc" "$eng" "$@"; }
+  _CONFIG_CACHED=0
+  assert_eq "pending: the quoted path is extracted" "$(kgairc_pending_path)" "$rc"
+
+  out="$(KGTEST_DISMISSED="$rc" "$eng" config)"
+  assert_has "the dismissed fixture is the dismissed shape" "$out" '"dismissed": true'
+  assert_hasnt "which carries no pending_approval at all" "$out" "pending_approval"
+
+  run_engine() { KGTEST_DISMISSED="$rc" "$eng" "$@"; }
+  _CONFIG_CACHED=0
+  assert_eq "dismissed: nothing is pending" "$(kgairc_pending_path)" ""
+
+  run_engine() { "$eng" "$@"; }
+  _CONFIG_CACHED=0
+  assert_eq "no .kgairc: nothing is pending" "$(kgairc_pending_path)" ""
+}
+
+# A dismissed .kgairc is decided, not pending: the prompt stops for good, and the local
+# store the user kept by dismissing is created as it is for any ordinary repo.
+t_dismissed_kgairc_is_not_pending() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  run_installer "KGTEST_INITIALIZED=false" "KGTEST_DISMISSED=$SB/proj/.kgairc"
+  assert_hasnt "a dismissed config raises no approval prompt" "$OUT" "awaiting your approval"
+  assert_file_has "and its local store is initialised" "$SB/engine.log" "init"
+}
+
+# With nothing pending, the eager init is unchanged (guards the deferral from over-firing).
+t_no_pending_still_inits() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  run_installer "KGTEST_INITIALIZED=false"
+  assert_file_has "a normal repo still initialises its store" "$SB/engine.log" "init"
+  assert_hasnt "and no spurious approval prompt" "$OUT" "awaiting your approval"
+}
+
 t_conflicts_are_surfaced() {
   make_release "$(host_release_os)" "$(host_release_arch)"
   run_installer "KGTEST_CONFLICTS=3"
@@ -546,6 +622,11 @@ run 'library mode creates no ~/.kgai skeleton'       t_library_mode_creates_no_s
 section 'the store and the status line'
 run 'an empty store is initialised once'             t_store_is_initialised_once
 run 'an existing store is left alone'                t_existing_store_is_left_alone
+run 'a pending .kgairc defers store init'            t_pending_kgairc_defers_store_init
+run 'a pending .kgairc is prompted in the status'    t_pending_kgairc_is_prompted_in_status
+run 'the path is read, not the per-layer boolean'   t_pending_path_is_the_path_not_the_boolean
+run 'a dismissed .kgairc is not pending'            t_dismissed_kgairc_is_not_pending
+run 'no pending → store still initialised'           t_no_pending_still_inits
 run 'unresolved conflicts are surfaced'              t_conflicts_are_surfaced
 run 'a failing background sync is surfaced'          t_autosync_failure_is_surfaced
 run 'every engine call runs in the project root'      t_engine_is_asked_in_the_project_root

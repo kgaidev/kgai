@@ -234,7 +234,23 @@ case "\$1" in
   version)   echo '{"ok":true,"version":"9.9.9"}' ;;
   status)    echo "{\"initialized\": \${KGTEST_INITIALIZED:-true}}" ;;
   conflicts) echo "{\"count\": \${KGTEST_CONFLICTS:-0}}" ;;
-  config)    echo '{"store_root":"'"\$PWD"'/.kgai/store"}' ;;
+  # Shaped like the real engine's, not merely keyed like it. \`kg config\` pretty-prints
+  # with sorted keys (encoding/json + MarshalIndent), so the output is MULTI-LINE and the
+  # per-layer \"pending_approval\": true lands EARLIER in the stream than the top-level
+  # \"pending_approval\": \"<path>\" — \"layers\" sorts before \"pending_approval\". Picking
+  # the quoted one out of that stream is exactly what install.sh's pattern is for, so a
+  # single-line fake carrying only the string tested the key and not the guard.
+  config)    p="\${KGTEST_PENDING:-}"; d="\${KGTEST_DISMISSED:-}"
+             printf '{\n'
+             [ -n "\$d" ] && printf '  "dismissed": "%s",\n' "\$d"
+             printf '  "layers": [\n    {\n      "layer": "project",\n'
+             printf '      "path": "%s",\n      "exists": %s,\n' "\$p\$d" \
+                    "\$( [ -n "\$p\$d" ] && echo true || echo false )"
+             [ -n "\$p" ] && printf '      "pending_approval": true,\n'
+             [ -n "\$d" ] && printf '      "dismissed": true,\n'
+             printf '      "settings": {}\n    }\n  ],\n  "ok": true,\n'
+             [ -n "\$p" ] && printf '  "pending_approval": "%s",\n' "\$p"
+             printf '  "store_root": "%s/.kgai/store"\n}\n' "\$PWD" ;;
   init)      mkdir -p "\$PWD/.kgai/store" ;;
   *)         echo '{}' ;;
 esac
