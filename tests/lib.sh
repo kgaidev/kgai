@@ -20,6 +20,12 @@ BASH_BIN="${BASH:-$(command -v bash)}"
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
 
+# fake_shell below speaks the probe's @KGPB@/@KGPE@ sentinels as literals. If install.sh
+# ever changed that spelling, every probe test would silently start proving nothing — so
+# drift fails the whole suite loudly, before a single test runs.
+grep -q '@KGPB@' "$REPO/scripts/install.sh" && grep -q '@KGPE@' "$REPO/scripts/install.sh" ||
+  { echo "tests/lib.sh: install.sh no longer speaks the @KGPB@/@KGPE@ sentinels fake_shell answers with" >&2; exit 1; }
+
 # Strip a trailing slash off TMPDIR before composing the path: macOS sets TMPDIR to
 # `/var/folders/.../T/` (with the slash), so `${TMPDIR}/kgai-tests` would contain `//`.
 # A sandbox path with `//` then fails to equal what `cd … && pwd` reports (the kernel
@@ -124,6 +130,9 @@ lib_sandbox() {
   SB="$TMPROOT/sb$T"
   rm -rf "$SB"; mkdir -p "$SB/etc" "$SB/.kgai/bin" "$SB/tmp" "$SB/proj"
   export HOME="$SB"
+  # Pinned into the sandbox: the probe and the engine wrapper mktemp scratch files into
+  # ${TMPDIR:-/tmp}, and load-mode tests used to drop those in the developer's real one.
+  export TMPDIR="$SB/tmp"
   export KGAI_HOME="$SB/.kgai"
   export KGAI_USER_BIN="$SB/.local/bin"
   export CLAUDE_PLUGIN_ROOT="$REPO"
@@ -166,16 +175,27 @@ fake_shell() { # $1 = PATH it reports, or NOISE-ONLY to answer nothing usable
 # The real bash, so a test can check what an actual terminal resolves.
 real_bash() { export KGAI_LOGIN_SHELL="$BASH_BIN"; }
 
+# Does a terminal on THIS host open a login shell? One mirror of install.sh's
+# terminal_is_login (kept in a single place here — this list used to be pasted into every
+# suite, and adding a platform meant five coordinated edits). The flow suites run the real
+# script against the real `uname`, so they must expect the same answer the code computes.
+host_terminal_is_login() {
+  case "$(uname -s)" in Darwin|MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac
+}
+
+# Flags that start $BASH_BIN the way this platform's terminal would.
+host_shell_flags() { if host_terminal_is_login; then echo "-lic"; else echo "-ic"; fi; }
+
 # The profile file install.sh writes to on THIS host, for a fresh sandbox whose login shell
-# is bash. run_installer runs the real script against the real `uname`, so a flow test must
-# expect the same file the code picks: .bashrc on Linux (a terminal there is not a login
-# shell), .bash_profile on macOS and Git Bash (it is). Hard-coding .bashrc made the flow
-# suite fail on the macos-14 and windows CI runners — the platforms this release targets.
+# is bash. A flow test must expect the same file the code picks: .bashrc on Linux (a
+# terminal there is not a login shell), .bash_profile where the terminal opens a login
+# shell (macOS; Git Bash back when a windows job existed). Hard-coding .bashrc made the
+# flow suite fail on the macos-14 CI runner — a platform this release targets.
 expected_profile() {
-  case "$(uname -s)" in
-    Darwin|MINGW*|MSYS*|CYGWIN*) printf '%s\n' "$SB/.bash_profile" ;;
-    *)                           printf '%s\n' "$SB/.bashrc" ;;
-  esac
+  if host_terminal_is_login
+  then printf '%s\n' "$SB/.bash_profile"
+  else printf '%s\n' "$SB/.bashrc"
+  fi
 }
 
 # ---- driving the installer as a script ------------------------------------------------
@@ -259,6 +279,7 @@ run_installer() {
     "KGAI_HOME=$SB/.kgai" \
     "KGAI_USER_BIN=$SB/.local/bin" \
     "KGAI_LOGIN_SHELL=$BASH_BIN" \
+    "KGAI_SYSTEM_PATH_FILES=$SB/etc/paths" \
     "CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT" \
     "CLAUDE_PROJECT_DIR=$SB/proj" \
     "KG_RELEASE_BASE=${RELEASE_URL:-}" \
@@ -280,6 +301,7 @@ run_installer_piped() {
     "KGAI_HOME=$SB/.kgai" \
     "KGAI_USER_BIN=$SB/.local/bin" \
     "KGAI_LOGIN_SHELL=$BASH_BIN" \
+    "KGAI_SYSTEM_PATH_FILES=$SB/etc/paths" \
     "CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT" \
     "CLAUDE_PROJECT_DIR=$SB/proj" \
     "KG_RELEASE_BASE=${RELEASE_URL:-}" \

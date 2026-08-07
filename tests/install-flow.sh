@@ -27,8 +27,8 @@ sandbox() { lib_sandbox; rm -f "$SB/.kgai/bin/kg"; }
 host_release_os()   { uname -s | tr 'A-Z' 'a-z'; }
 host_release_arch() {
   case "$(uname -m)" in
-    x86_64|amd64)  [ "$(host_release_os)" = darwin ] && echo x86_64 || echo x86_64 ;;
-    aarch64|arm64) [ "$(host_release_os)" = darwin ] && echo arm64  || echo aarch64 ;;
+    x86_64|amd64)  echo x86_64 ;;
+    aarch64|arm64) [ "$(host_release_os)" = darwin ] && echo arm64 || echo aarch64 ;;
     *) uname -m ;;
   esac
 }
@@ -61,9 +61,8 @@ t_fresh_install() {
 t_fresh_install_is_usable_in_a_new_terminal() {
   make_release "$(host_release_os)" "$(host_release_arch)"
   run_installer
-  local out flags
-  case "$(uname -s)" in Darwin|MINGW*|MSYS*|CYGWIN*) flags="-lic" ;; *) flags="-ic" ;; esac
-  out="$(env -i "HOME=$SB" "PATH=/usr/bin:/bin" "$BASH_BIN" $flags \
+  local out
+  out="$(env -i "HOME=$SB" "PATH=/usr/bin:/bin" "$BASH_BIN" $(host_shell_flags) \
           'kg version' 2>/dev/null </dev/null | tail -n1)"
   assert_has "a fresh terminal runs kg through the launcher" "$out" '"ok":true'
 }
@@ -144,6 +143,35 @@ t_checksum_mismatch_is_refused() {
   assert_no_match "leaving no partial file" "$SB/.kgai/bin/kg.new*"
   assert_has "the session is told the engine is missing" "$OUT" "ENGINE NOT INSTALLED"
   assert_hasnt "and never told it is ready" "$OUT" "engine ready"
+  # stderr carries the source-build fallback's log here, by design — but never the
+  # installer's own file-handling noise.
+  assert_hasnt "no permission noise leaks to stderr" "$ERR" "Permission denied"
+}
+
+# A leftover from the days of a FIXED temp name — or any junk a crash left at kg.new —
+# must not be able to break, or worse corrupt, the next install. mktemp names each
+# download uniquely, so whatever sits there is simply ignored.
+t_leftover_download_temp_cannot_break_install() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  mkdir -p "$SB/.kgai/bin/kg.new"       # the worst leftover: a directory under the old name
+  run_installer
+  assert_has "the install goes through regardless" "$OUT" "engine ready"
+  assert_exists "and the engine lands" "$SB/.kgai/bin/kg"
+}
+
+# Two Claude Code windows starting together each download the engine. With a shared fixed
+# temp they interleaved writes and one could publish bytes the other was still writing —
+# after the checksum had passed on an earlier state of the file.
+t_concurrent_installs_publish_whole_engine() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  local i
+  for i in 1 2 3 4; do
+    ( run_installer >/dev/null 2>&1 ) &
+  done
+  wait 2>/dev/null
+  assert_files_identical "the published engine is exactly the released asset" \
+    "$SB/release/kg-$(host_release_os)-$(host_release_arch)" "$SB/.kgai/bin/kg"
+  assert_no_match "and no download temp survives" "$SB/.kgai/bin/kg.new*"
 }
 
 t_missing_checksum_is_tolerated() {
@@ -168,6 +196,8 @@ t_unreachable_release_falls_back() {
   assert_has "an unreachable release is reported" "$OUT" "prebuilt download failed"
   assert_has "and the session is told the engine is missing" "$OUT" "ENGINE NOT INSTALLED"
   assert_hasnt "never claiming readiness" "$OUT" "engine ready"
+  # stderr carries the source-build fallback's log here, by design.
+  assert_hasnt "but no permission noise" "$ERR" "Permission denied"
 }
 
 # Downloaded, checksum fine, and it still will not run here — the case that used to be
@@ -209,6 +239,36 @@ t_broken_engine_does_not_touch_the_profile() {
   printf '#!/bin/sh\nexit 3\n' > "$SB/.kgai/bin/kg"; chmod +x "$SB/.kgai/bin/kg"
   run_installer
   assert_files_identical "a dead engine changes nothing else" "$SB/bashrc-1" "$(expected_profile)"
+}
+
+# An engine that HANGS is worse than one that dies: it used to hold the session start
+# hostage until the hook's 180s cap fired — every session, silently. The time-box turns
+# it into the same loud "not running" answer a crash gets. (KGAI_ENGINE_TIMEOUT exists
+# for this test; the shipped default is a minute.)
+t_hanging_engine_is_reported_not_waited() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  run_installer
+  printf '#!/bin/sh\nsleep 30\n' > "$SB/.kgai/bin/kg"; chmod +x "$SB/.kgai/bin/kg"
+  run_installer "KGAI_ENGINE_TIMEOUT=2"
+  assert_has "a hung engine is called out" "$OUT" "ENGINE INSTALLED BUT NOT RUNNING"
+  assert_has "with the timeout named" "$OUT" "did not respond"
+  assert_hasnt "and readiness is never claimed" "$OUT" "engine ready"
+}
+
+# The same for the store-reading verbs the hook calls (status/config/conflicts): one of
+# them wedging — a locked store, a hung filesystem — must not stall the whole session.
+t_hanging_store_verbs_do_not_hang_the_session() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  local asset="$SB/release/kg-$(host_release_os)-$(host_release_arch)"
+  cat > "$asset" <<'ENGINE'
+#!/bin/sh
+case "$1" in version) echo '{"ok":true,"version":"9.9.9"}' ;; *) sleep 30 ;; esac
+ENGINE
+  chmod +x "$asset"
+  _sum "$asset" > "$asset.sha256"
+  run_installer "KGAI_ENGINE_TIMEOUT=2"
+  assert_rc "the session start completes" "$RC" 0
+  assert_has "and the engine is reported ready" "$OUT" "engine ready"
 }
 
 # ======================================================================================
@@ -254,6 +314,16 @@ t_windows_is_refused_clearly() {
   assert_hasnt "nor to a network problem" "$OUT" "github unreachable"
   assert_absent "and no engine is left behind" "$SB/.kgai/bin/kg"
   assert_hasnt "readiness is never claimed" "$OUT" "engine ready"
+  assert_eq "and stderr stays clean" "$ERR" ""
+}
+
+# A platform that was just told the engine cannot exist here must not be left with an
+# empty ~/.kgai skeleton it was never going to use.
+t_windows_refusal_leaves_no_skeleton() {
+  fake_uname MINGW64_NT-10.0-22631 x86_64
+  RELEASE_URL="file://$SB/no-such-release"
+  run_installer "KGAI_HOME=$SB/fresh-home"
+  assert_absent "a refused platform gets no install home" "$SB/fresh-home"
 }
 
 # Executing install.sh (not sourcing) with KGAI_INSTALL_LIB set must exit cleanly, not
@@ -264,6 +334,14 @@ t_library_guard_when_executed() {
   assert_hasnt "no return-outside-function error" "$ERR" "can only"
   assert_hasnt "and it did not proceed to install" "$OUT" "engine ready"
   assert_absent "no engine was installed" "$SB/.kgai/bin/kg"
+}
+
+# "Sourcing it changes nothing" includes the filesystem: the ~/.kgai skeleton used to be
+# created before the library guard, so even inert loads (and refused platforms) got one.
+t_library_mode_creates_no_skeleton() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  run_installer "KGAI_INSTALL_LIB=1" "KGAI_HOME=$SB/fresh-home"
+  assert_absent "library mode creates no install home" "$SB/fresh-home"
 }
 
 # ======================================================================================
@@ -334,6 +412,60 @@ t_nothing_is_written_to_stderr_on_success() {
   assert_eq "a successful install is silent on stderr" "$ERR" ""
 }
 
+# The fingerprint write can fail ($KGAI_HOME quota, permissions drift) — and without it
+# every later session re-downloads the whole engine. That price gets announced, once,
+# instead of silently paid at every session start.
+t_unrecordable_fingerprint_warns() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  mkdir -p "$SB/.kgai/.srcver"          # a directory where the fingerprint file goes
+  run_installer
+  assert_has "the install itself still lands" "$OUT" "engine ready"
+  assert_has "but the cost is named" "$OUT" "could not record the installed version"
+  assert_eq "with no raw error on stderr" "$ERR" ""
+}
+
+# KGAI_USER_BIN pointed at the engine's own directory is a documented knob away from
+# destroying the install: the launcher used to overwrite the engine with a script that
+# execs itself forever, and every session after that hung on the first kg call.
+t_user_bin_at_engine_dir_is_survivable() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  run_installer "KGAI_USER_BIN=$SB/.kgai/bin"
+  assert_has "the install reports ready" "$OUT" "engine ready"
+  assert_files_identical "and the engine is still the engine" \
+    "$SB/release/kg-$(host_release_os)-$(host_release_arch)" "$SB/.kgai/bin/kg"
+  run_installer "KGAI_USER_BIN=$SB/.kgai/bin" "KGAI_ENGINE_TIMEOUT=2"
+  assert_rc "the next session still starts" "$RC" 0
+  assert_hasnt "with a healthy engine" "$OUT" "NOT RUNNING"
+}
+
+# The system-wide PATH files (/etc/paths, /etc/profile.d/…) are part of the coverage
+# scan, and a flow test must read the SANDBOX's, not the host's — a host entry mentioning
+# ~/.local/bin used to silently decide which branch these tests exercised.
+t_system_path_files_are_sandboxed() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  printf '%s\n' "$SB/.local/bin" > "$SB/etc/paths"
+  fake_shell "/usr/bin:$SB/.local/bin:/bin"
+  run_installer "KGAI_LOGIN_SHELL=$SB/fakebin/bash"
+  assert_file_hasnt "sandbox /etc coverage suppresses the append" \
+    "$(expected_profile)" "added by kgai"
+  assert_exists "and the probe's confirmation is stamped" "$SB/.kgai/.path-ok"
+}
+
+# With HOME unset (a stripped-down service environment), `set -u` used to kill the hook
+# with a bare `HOME: unbound variable` — the one message in the script that says nothing
+# about kgai and nothing about the fix.
+t_home_unset_is_reported_kindly() {
+  make_release "$(host_release_os)" "$(host_release_arch)"
+  local out rc
+  out="$(env -i "PATH=/usr/local/bin:/usr/bin:/bin" "TMPDIR=$SB/tmp" \
+        "KG_RELEASE_BASE=$RELEASE_URL" \
+        "$BASH_BIN" "$REPO/scripts/install.sh" 2>"$SB/home-err")"; rc=$?
+  assert_rc "an unset HOME exits cleanly" "$rc" 0
+  assert_has "with a kgai-branded message" "$out" "kgai:"
+  assert_has "naming the problem" "$out" "HOME is not set"
+  assert_hasnt "and no raw unbound-variable error" "$(cat "$SB/home-err" 2>/dev/null)" "unbound variable"
+}
+
 # ======================================================================================
 # 6. The by-hand install
 # ======================================================================================
@@ -393,17 +525,23 @@ run 'a missing checksum is tolerated, with a note'   t_missing_checksum_is_toler
 run 'a corrupted asset is caught'                    t_truncated_download_is_refused
 run 'an unreachable release is reported'             t_unreachable_release_falls_back
 run 'an engine that will not run is reported'        t_engine_that_does_not_run
+run 'a leftover download temp cannot break an install' t_leftover_download_temp_cannot_break_install
+run 'concurrent installs publish a whole engine'     t_concurrent_installs_publish_whole_engine
 
 section 'an engine that stopped working'
 run 'a dead engine is called out, not "ready"'       t_installed_but_broken_engine
 run 'and it changes nothing else'                    t_broken_engine_does_not_touch_the_profile
+run 'a HUNG engine is called out, not waited for'    t_hanging_engine_is_reported_not_waited
+run 'hung store verbs do not hang the session'       t_hanging_store_verbs_do_not_hang_the_session
 
 section 'platforms'
 run 'macOS arm64 asset names'                        t_macos_asset_names
 run 'macOS x86_64 asset names'                       t_macos_intel_asset_names
 run 'Linux aarch64 asset names'                      t_linux_arm_asset_names
 run 'Windows/Git Bash is refused clearly'            t_windows_is_refused_clearly
+run 'a refused platform gets no ~/.kgai skeleton'    t_windows_refusal_leaves_no_skeleton
 run 'library guard exits cleanly when executed'      t_library_guard_when_executed
+run 'library mode creates no ~/.kgai skeleton'       t_library_mode_creates_no_skeleton
 
 section 'the store and the status line'
 run 'an empty store is initialised once'             t_store_is_initialised_once
@@ -413,6 +551,10 @@ run 'a failing background sync is surfaced'          t_autosync_failure_is_surfa
 run 'every engine call runs in the project root'      t_engine_is_asked_in_the_project_root
 run 'the status line is one line'                    t_status_line_is_one_line
 run 'success is silent on stderr'                    t_nothing_is_written_to_stderr_on_success
+run 'an unrecordable fingerprint is priced out loud' t_unrecordable_fingerprint_warns
+run 'KGAI_USER_BIN at the engine dir is survivable'  t_user_bin_at_engine_dir_is_survivable
+run "the host's /etc cannot decide a flow test"      t_system_path_files_are_sandboxed
+run 'an unset HOME is reported kindly'               t_home_unset_is_reported_kindly
 
 section 'the by-hand install'
 run 'curl | bash installs'                           t_piped_install

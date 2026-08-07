@@ -281,12 +281,29 @@ t_entry_probe_says_nothing() {
   ensure_path_entry; assert_rc "an unparseable probe is not a verdict" $? 1
 }
 
+# A write FAILURE is rc 2, distinct from rc 1's "nothing to do" — folding them together
+# is how a read-only profile meant a bare "engine ready" with kg unreachable, for good.
 t_entry_unwritable_rc() {
   need_write_deny || return 0
   load; export KGAI_LOGIN_SHELL=/bin/bash; host_os() { echo Linux; }
   : > "$HOME/.bashrc"; chmod 444 "$HOME/.bashrc"
-  ensure_path_entry; assert_rc "an unwritable profile fails quietly" $? 1
+  ensure_path_entry; assert_rc "an unwritable profile is a write failure, not silence" $? 2
   chmod 644 "$HOME/.bashrc"
+}
+
+# The scan must not leak bash's own Permission denied onto stderr at every session start
+# when a profile in the search list exists but cannot be read (root-owned 600 files under
+# /etc/profile.d are routine on managed machines).
+t_scan_unreadable_file_is_quiet() {
+  need_write_deny || return 0
+  load; export KGAI_LOGIN_SHELL=/bin/bash; host_os() { echo Linux; }
+  printf 'export PATH="$HOME/.local/bin:$PATH"\n' > "$HOME/.profile"
+  chmod 000 "$HOME/.profile"
+  local rc
+  path_covered 2>"$SB/scan-err"; rc=$?
+  chmod 644 "$HOME/.profile"
+  assert_rc "an unreadable profile cannot vouch for coverage" "$rc" 1
+  assert_eq "and is skipped in silence" "$(cat "$SB/scan-err" 2>/dev/null)" ""
 }
 
 t_entry_fish_creates_dir() {
@@ -411,6 +428,50 @@ t_launcher_keeps_foreign_symlink() {
   [ -L "$KGAI_USER_BIN/kg" ] || _fail "the link was replaced"
 }
 
+# The launcher is a shell script, and a script other users cannot READ is one they cannot
+# run: mktemp creates the temp 0600, and a bare `chmod +x` published 0711 on a shared box.
+t_launcher_is_world_runnable() {
+  load
+  write_launcher; assert_rc "the launcher is written" $? 0
+  assert_mode "and is readable to every user who may execute it" \
+    "$KGAI_USER_BIN/kg" "-rwxr-xr-x"
+}
+
+# KGAI_USER_BIN pointed at the engine's own directory makes the launcher's destination THE
+# ENGINE — which the ownership checks all call "ours" (identical bytes), so the launcher
+# overwrote the engine with a script that execs itself forever, and every session after
+# that hung on the first kg call. It is a documented knob, so it will be set.
+t_launcher_never_overwrites_engine() {
+  load
+  USER_BIN="$KGAI_HOME/bin"
+  write_launcher; assert_rc "USER_BIN at the engine dir is a clean no-op" $? 0
+  assert_file_has "the engine survives, byte for byte" "$KGAI_HOME/bin/kg" "fake engine"
+  assert_file_hasnt "and is not the launcher" "$KGAI_HOME/bin/kg" "kgai launcher"
+}
+
+# Ownership is claimed by the launcher's opening line, not by the words appearing
+# anywhere: a wrapper script that merely MENTIONS the kgai launcher is somebody's file.
+t_launcher_keeps_mere_mention() {
+  load
+  mkdir -p "$KGAI_USER_BIN"
+  printf '#!/bin/sh\n# wraps the kgai launcher, but is not it\necho wrapper\n' > "$KGAI_USER_BIN/kg"
+  chmod +x "$KGAI_USER_BIN/kg"
+  write_launcher; assert_rc "a mere mention is not ownership" $? 2
+  assert_file_has "and the file is left alone" "$KGAI_USER_BIN/kg" "echo wrapper"
+}
+
+# A body write that FAILS (disk full, quota) must publish nothing: the old check only
+# asked whether the temp existed, and a truncated launcher went into PATH executable.
+t_launcher_failed_write_publishes_nothing() {
+  load
+  cat() { return 1; }                    # the body write fails, whatever the reason
+  write_launcher; local rc=$?
+  unset -f cat
+  assert_rc "a failed body write is a write failure" "$rc" 1
+  assert_absent "nothing was published" "$KGAI_USER_BIN/kg"
+  assert_no_match "and no temp survives" "$KGAI_USER_BIN/kg.new.*"
+}
+
 t_launcher_unwritable_dir() {
   need_write_deny || return 0
   load
@@ -507,6 +568,59 @@ t_onpath_probe_unavailable_is_not_a_warning() {
   ensure_on_path
   assert_file_has "the line is still written" "$HOME/.bashrc" "$KGAI_MARK"
   assert_hasnt "not knowing is not a failure" "$PATH_NOTE" "⚠"
+}
+
+# When the line was appended but no probe could confirm it, the note must say exactly
+# that — the probe's contract forbids dressing "could not find out" up as success, and
+# the success wording is what it used to get.
+t_onpath_append_unverifiable_is_neutral() {
+  load; host_os() { echo Linux; }
+  export KGAI_LOGIN_SHELL="$SB/unprobeable-shell"   # unknown shell: never probed
+  ensure_on_path
+  assert_file_has "the line is written" "$HOME/.profile" "$KGAI_MARK"
+  assert_has "the note admits it could not verify" "$PATH_NOTE" "could not be verified"
+  assert_hasnt "it does not claim new terminals have it" "$PATH_NOTE" "new terminals have it"
+  assert_hasnt "and does not warn either" "$PATH_NOTE" "⚠"
+}
+
+# A profile that refuses the write is WARNED about, with the line handed over — the
+# failure used to fold into "nothing to do" and the session said nothing at all, which is
+# the exact silence the README promises the status line breaks.
+t_onpath_readonly_profile_warns() {
+  need_write_deny || return 0
+  load; export KGAI_LOGIN_SHELL=/bin/bash; host_os() { echo Linux; }
+  : > "$HOME/.bashrc"; chmod 444 "$HOME/.bashrc"
+  ensure_on_path 2>"$SB/on-err"
+  chmod 644 "$HOME/.bashrc"
+  assert_has "an unwritable profile is warned about" "$PATH_NOTE" "⚠"
+  assert_has "naming what could not be done" "$PATH_NOTE" "could not add"
+  assert_has "and handing over the line to add by hand" "$PATH_NOTE" "export PATH="
+  assert_eq "with no raw bash error leaking to stderr" "$(cat "$SB/on-err" 2>/dev/null)" ""
+}
+
+# $KGAI_HOME so broken that even the lock cannot be created is the same class of failure:
+# needed, not done, so it must be said.
+t_onpath_unwritable_kgai_home_warns() {
+  need_write_deny || return 0
+  load; export KGAI_LOGIN_SHELL=/bin/bash; host_os() { echo Linux; }
+  chmod 555 "$KGAI_HOME"
+  ensure_on_path
+  chmod 755 "$KGAI_HOME"
+  assert_has "an unwritable KGAI_HOME cannot fail in silence" "$PATH_NOTE" "⚠"
+  assert_has "and still hands over the line" "$PATH_NOTE" "export PATH="
+}
+
+# The status is one LINE — that is the contract with SessionStart — and $USER_BIN is data
+# that may legally contain a newline. It must be flattened at the note boundary.
+t_note_is_one_line_despite_hostile_user_bin() {
+  load; export KGAI_LOGIN_SHELL=/bin/bash; host_os() { echo Linux; }
+  USER_BIN="$SB/two
+lines/bin"
+  mkdir -p "$USER_BIN"
+  printf '#!/bin/sh\necho other tool\n' > "$USER_BIN/kg"; chmod +x "$USER_BIN/kg"
+  ensure_on_path
+  assert_has "the collision is still reported" "$PATH_NOTE" "not ours"
+  assert_eq "in exactly one line" "$(printf '%s' "$PATH_NOTE" | wc -l | tr -d ' ')" "0"
 }
 
 # ======================================================================================
@@ -609,6 +723,71 @@ t_probe_gives_up_cleanly() {
   assert_rc "no shell to ask is its own answer" $? 2
 }
 
+# The probe EXECUTES the login shell, and its path is environment-derived — so a relative
+# value must never be run as-is: it would resolve against the hook's cwd, the project
+# directory, where anything checked out can name itself `bash`. The probe re-resolves the
+# NAME on PATH instead.
+t_probe_never_execs_relative_shell() {
+  load; host_os() { echo Linux; }
+  mkdir -p "$SB/proj/tools"
+  printf '#!/bin/sh\n: > "%s/CANARY"\nprintf "%%s" "@KGPB@/x@KGPE@"\n' "$SB" \
+    > "$SB/proj/tools/bash"
+  chmod +x "$SB/proj/tools/bash"
+  cd "$SB/proj"
+  export KGAI_LOGIN_SHELL="tools/bash"
+  probe_login_path >/dev/null 2>&1
+  assert_absent "a relative login shell is never executed" "$SB/CANARY"
+}
+
+# And a shell that is not a KNOWN shell is not probed at all — "run it and see" is not an
+# acceptable answer for an arbitrary absolute path the environment handed over.
+t_probe_refuses_unknown_shell() {
+  load; host_os() { echo Linux; }
+  printf '#!/bin/sh\n: > "%s/CANARY"\n' "$SB" > "$SB/mystery-shell"
+  chmod +x "$SB/mystery-shell"
+  export KGAI_LOGIN_SHELL="$SB/mystery-shell"
+  path_reachable
+  assert_rc "an unknown shell means cannot-probe" $? 2
+  assert_absent "and it was never executed" "$SB/CANARY"
+}
+
+# A strict POSIX `sleep` rejects 0.1 — instantly, exit non-zero — and polling with it
+# would burn the probe's whole budget in milliseconds, killing shells that were about to
+# answer. The tick has to degrade to whole seconds, not to zero.
+t_probe_ticks_survive_posix_sleep() {
+  load_with_strict_sleep() {
+    mkdir -p "$SB/strictbin"
+    cat > "$SB/strictbin/sleep" <<'S'
+#!/bin/sh
+case "$1" in *[!0-9]*) echo "sleep: invalid time interval" >&2; exit 1 ;; esac
+exec /bin/sleep "$1"
+S
+    chmod +x "$SB/strictbin/sleep"
+    PATH="$SB/strictbin:$PATH"
+    load
+  }
+  load_with_strict_sleep; host_os() { echo Linux; }
+  # A shell slow enough that a burnt budget kills it mid-answer, fast enough for a suite.
+  mkdir -p "$SB/fakebin"
+  printf '#!/bin/sh\nsleep 1\nprintf "%%s" "@KGPB@%s@KGPE@"\n' \
+    "/usr/bin:$KGAI_USER_BIN:/bin" > "$SB/fakebin/bash"
+  chmod +x "$SB/fakebin/bash"
+  export KGAI_LOGIN_SHELL="$SB/fakebin/bash"
+  path_reachable
+  assert_rc "a slow shell still gets its say under a strict sleep" $? 0
+}
+
+# A profile that `exec`s something else entirely (a tmux, a different shell) swallows the
+# probe's snippet: no sentinels can ever arrive. That must be a clean "could not find
+# out" within the budget, not a hang and not a verdict.
+t_probe_survives_exec_profile() {
+  export KGAI_PROBE_TIMEOUT=2
+  load; real_bash; host_os() { echo Linux; }
+  printf 'exec sleep 30\n' > "$HOME/.bashrc"
+  path_reachable
+  assert_rc "a profile that execs away is not a verdict" $? 2
+}
+
 # ======================================================================================
 
 suite_header 'kgai — install.sh: PATH wiring'
@@ -630,6 +809,7 @@ run "another shell's rc does not count"              t_scan_other_shells_rc
 run 'a file without a trailing newline is read'      t_scan_no_trailing_newline
 run 'a home directory with a space works'            t_scan_home_with_space
 run 'USER_BIN outside HOME matches exactly'          t_scan_user_bin_outside_home
+run 'an unreadable profile is skipped in silence'    t_scan_unreadable_file_is_quiet
 
 section 'choosing the profile to write'
 run 'zsh → .zshrc'                                   t_target_zsh
@@ -649,11 +829,11 @@ run 'a commented mention does not block it'          t_entry_commented_mention
 run 'genuine coverage is left alone and stamped'     t_entry_genuinely_covered
 run 'a stamp skips the probe while covered'          t_entry_stamp_skips_probe_when_covered
 run 'a stamp does not survive lost coverage'         t_entry_stamp_does_not_survive_lost_coverage
-run 'a stamp for another dir does not'               t_entry_stamp_other_dir
+run 'a stamp for another dir does not count'         t_entry_stamp_other_dir
 run 'a probe overrules a mention that never fires'   t_entry_conditional_mention
 run 'with no probe, the scan is trusted'             t_entry_probe_unavailable
 run 'an unparseable probe is not a verdict'          t_entry_probe_says_nothing
-run 'an unwritable profile fails quietly'            t_entry_unwritable_rc
+run 'an unwritable profile is a write failure'       t_entry_unwritable_rc
 run 'fish gets its directory created'                t_entry_fish_creates_dir
 run 'KGAI_USER_BIN is honoured'                      t_entry_respects_user_bin_override
 
@@ -670,6 +850,10 @@ run "a stranger's kg is left alone"                  t_launcher_keeps_foreign
 run "a link to someone else's tool is left alone"    t_launcher_keeps_foreign_symlink
 run 'an uncreatable bin dir is a write failure'      t_launcher_unwritable_dir
 run 'an unwritable bin dir leaves no temp file'      t_launcher_unwritable_file
+run 'the launcher is readable by every user'         t_launcher_is_world_runnable
+run 'USER_BIN at the engine dir cannot eat the engine' t_launcher_never_overwrites_engine
+run 'a mere mention of the launcher is not ownership' t_launcher_keeps_mere_mention
+run 'a failed body write publishes nothing'          t_launcher_failed_write_publishes_nothing
 
 section 'both halves, and what the user is told'
 run 'a clean run wires and reports both'             t_onpath_clean
@@ -680,6 +864,10 @@ run 'an unwritable launcher warns and still wires'   t_onpath_launcher_unwritabl
 run 'unreachable PATH is a warning, not "ready"'     t_onpath_warns_when_still_unreachable
 run 'a settled machine says nothing'                 t_onpath_quiet_on_second_run
 run 'not being able to check is not a warning'       t_onpath_probe_unavailable_is_not_a_warning
+run 'an unverifiable append is reported as exactly that' t_onpath_append_unverifiable_is_neutral
+run 'a read-only profile is warned about, with the line' t_onpath_readonly_profile_warns
+run 'an unwritable KGAI_HOME is warned about'        t_onpath_unwritable_kgai_home_warns
+run 'the note stays one line whatever USER_BIN holds' t_note_is_one_line_despite_hostile_user_bin
 
 section 'end to end'
 run 'a real shell resolves kg'                       t_e2e_real_shell_resolves_kg
@@ -694,5 +882,9 @@ run 'sourcing it changes nothing'                    t_lib_mode_is_inert
 run 'the probe survives a chatty profile'            t_probe_survives_a_noisy_profile
 run 'the probe reports a missing dir'                t_probe_reports_unreachable
 run 'the probe gives up cleanly'                     t_probe_gives_up_cleanly
+run 'a relative login shell is never executed'       t_probe_never_execs_relative_shell
+run 'an unknown shell is refused, not run'           t_probe_refuses_unknown_shell
+run 'a strict POSIX sleep does not burn the budget'  t_probe_ticks_survive_posix_sleep
+run 'a profile that execs away is not a verdict'     t_probe_survives_exec_profile
 
 summary

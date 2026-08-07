@@ -11,6 +11,14 @@
 # Prints a short, AI-readable status line to stdout (SessionStart feeds it to Claude).
 set -uo pipefail
 
+# Everything below hangs off $HOME — the install home, the user bin, every profile. With
+# HOME unset, `set -u` would kill the hook with a bare `HOME: unbound variable`, the one
+# exit in this script that does not say kgai. Say it properly and stand down instead.
+if [ -z "${HOME:-}" ]; then
+  echo "kgai: ⚠️ HOME is not set — cannot locate the install home (~/.kgai). Set HOME and start a new session."
+  return 0 2>/dev/null || exit 0
+fi
+
 # BASH_SOURCE is unset when the script is piped in (`curl … | bash`, the by-hand install),
 # and `set -u` would abort on it — fall back to $0 so a standalone run still works.
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)}"
@@ -27,9 +35,35 @@ PLUGIN_VERSION="${PLUGIN_VERSION:-dev}"
 # platform asset is missing (e.g. before the first release), the download fails and we fall
 # back to building from source. Override or set empty to force the source build.
 KG_RELEASE_BASE="${KG_RELEASE_BASE-https://github.com/kgaidev/kgai/releases/latest/download}"
-mkdir -p "$KGAI_HOME/bin" "$LIBDIR"
+# The ~/.kgai skeleton is created down in the script body, AFTER the library guard and the
+# platform refusal — sourcing this file must change nothing, and a refused platform must
+# not be left with an empty install home it was just told it cannot use.
 
 status() { echo "kgai: $*"; }
+
+# Sub-second polling where this host's sleep takes fractions (GNU and macOS: yes; a strict
+# POSIX sleep: no). Detected once, because ticking with a sleep that REJECTS 0.1 — it
+# exits non-zero instantly — would burn a whole polling budget in milliseconds, and every
+# probe below would then report "could not find out" with nothing ever said about it.
+if sleep 0.1 2>/dev/null; then TICK=0.1; TICKS_PER_SEC=10; else TICK=1; TICKS_PER_SEC=1; fi
+
+# Both caps exist so the tests are not the first place a wedged process is discovered.
+# The probe asks one interactive shell for its PATH; the engine cap covers every `kg`
+# call the hook makes — the hook's own budget is 180s (hooks/hooks.json), and one hung
+# engine used to stall session start for all of it.
+PROBE_TIMEOUT="${KGAI_PROBE_TIMEOUT:-10}"
+ENGINE_TIMEOUT="${KGAI_ENGINE_TIMEOUT:-60}"
+
+# Wait out a backgrounded pid, killing it once its budget (seconds) is spent. The exit
+# status is the child's own, or 137 after a kill.
+reap_within() { # <pid> <seconds>
+  local pid="$1" budget=$(($2 * TICKS_PER_SEC)) waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    [ "$waited" -ge "$budget" ] && { kill -9 "$pid" 2>/dev/null; break; }
+    sleep "$TICK"; waited=$((waited + 1))
+  done
+  wait "$pid" 2>/dev/null
+}
 
 # sha256 of stdin. macOS ships shasum, not sha256sum — every hash goes through here so a
 # missing GNU coreutils never silently yields an empty digest.
@@ -109,8 +143,11 @@ PATH_NOTE=""
 PATH_RC=""
 PATH_OK_STAMP="$KGAI_HOME/.path-ok"
 
-# Wrapped so the tests can pretend to be another OS. Every platform decision below goes
-# through it; nothing calls `uname -s` directly.
+# Wrapped so the tests can pretend to be another OS. Every LIBRARY-mode platform decision
+# goes through it, so sourcing tests can override the function. The script body below the
+# library guard (asset selection, the Windows refusal, the rpath flavour) calls `uname`
+# directly — those branches run as a child process, where the tests shadow `uname` on PATH
+# instead; the two seams cover disjoint code and cannot disagree on one decision.
 host_os() { uname -s; }
 
 # Does this platform's terminal open a LOGIN shell? A macOS Terminal tab and a Git Bash
@@ -152,7 +189,9 @@ lexical_abs() {
 #   * a byte-for-byte copy of the engine — what `cp ~/.kgai/bin/kg ~/.local/bin/` leaves.
 ours_already() {
   local p="$1" target home
-  grep -q 'kgai launcher' "$p" 2>/dev/null && return 0
+  # Anchored to the line the launcher has opened with since v1.4.0. A bare substring match
+  # adopted (and overwrote) any file that merely MENTIONED "kgai launcher" somewhere.
+  grep -q '^# kgai launcher' "$p" 2>/dev/null && return 0
   if [ -L "$p" ]; then
     target="$(readlink "$p" 2>/dev/null)"
     # A relative link resolves against the directory the link lives in, not $PWD. Then
@@ -173,7 +212,15 @@ ours_already() {
 }
 
 write_launcher() {
-  local dest="$USER_BIN/kg" tmp
+  local dest="$USER_BIN/kg" tmp dabs babs
+  # KGAI_USER_BIN pointed at the engine's own directory makes $dest THE ENGINE. Every
+  # ownership test below then answers "ours" (identical bytes), and the launcher would
+  # overwrite the engine with a script that execs itself forever — after which every
+  # session start hung on the first `kg` call. The engine already IS runnable at that
+  # path, so there is nothing for a launcher to add: succeed by doing nothing.
+  dabs="$(lexical_abs "$dest" 2>/dev/null)" || dabs=""
+  babs="$(lexical_abs "$BIN" 2>/dev/null)" || babs=""
+  if [ -n "$dabs" ] && [ "$dabs" = "$babs" ]; then return 0; fi
   mkdir -p "$USER_BIN" 2>/dev/null || return 1
   # A fresh unique temp via mktemp, not a predictable "$dest.new.$$": two sessions starting
   # together must not write the same temp (one could rename a half-written file into
@@ -191,7 +238,9 @@ write_launcher() {
   # A launcher script, not a symlink: the macOS rpath is @loader_path/../lib, resolved
   # against the path the binary was started from. Through a symlink in ~/.local/bin that
   # would look for the native lib in ~/.local/lib and fail to load.
-  cat > "$tmp" 2>/dev/null <<'LAUNCHER'
+  # `cat`'s own exit status is checked below — a short write (disk full, a quota) used to
+  # pass the old "does the temp exist" test and get published as a corrupt executable.
+  if ! cat 2>/dev/null > "$tmp" <<'LAUNCHER'
 #!/usr/bin/env bash
 # kgai launcher — installed by the kgai Claude Code plugin (scripts/install.sh).
 # Runs the engine from its stable home ($KGAI_HOME, default ~/.kgai) so `kg` works in any
@@ -208,14 +257,17 @@ export LD_LIBRARY_PATH="$KGAI_HOME/lib:${LD_LIBRARY_PATH:-}"
 export DYLD_LIBRARY_PATH="$KGAI_HOME/lib:${DYLD_LIBRARY_PATH:-}"
 exec "$BIN" "$@"
 LAUNCHER
-  [ -f "$tmp" ] || { rm -f "$tmp" 2>/dev/null; return 1; }
+  then rm -f "$tmp" 2>/dev/null; return 1; fi
   # Already exactly this launcher: leave the inode alone. A SYMLINK never counts as
   # already-correct even when it resolves to the same bytes — it is the pre-1.4.0 shape
   # we are here to replace, and following it would rewrite the engine in $KGAI_HOME.
   if [ -f "$dest" ] && [ ! -L "$dest" ] && cmp -s "$tmp" "$dest"; then
     rm -f "$tmp"; return 0
   fi
-  chmod +x "$tmp" 2>/dev/null && mv "$tmp" "$dest" 2>/dev/null ||
+  # An explicit 755, not `chmod +x`: mktemp creates 0600, and +x under the usual umask
+  # yields 0711 — a shell script other users of a shared machine can execute but not READ,
+  # which is to say not run at all.
+  chmod 755 "$tmp" 2>/dev/null && mv "$tmp" "$dest" 2>/dev/null ||
     { rm -f "$tmp" 2>/dev/null; return 1; }
 }
 
@@ -257,9 +309,23 @@ rc_files() {
   esac
 }
 
-# System-wide files, read before any of the user's own. A function so the tests can point
-# it somewhere harmless instead of the real /etc.
+# System-wide files, read before any of the user's own. A function so sourcing tests can
+# point it somewhere harmless instead of the real /etc — and an env override
+# (colon-separated) so script-mode test runs are sandboxed the same way; without it, a
+# host /etc entry that happens to mention the user bin silently changed which branch a
+# flow test exercised.
 system_path_files() {
+  if [ -n "${KGAI_SYSTEM_PATH_FILES+x}" ]; then
+    local part had_f=0
+    case "$-" in *f*) had_f=1 ;; esac
+    set -f
+    local IFS=:
+    for part in $KGAI_SYSTEM_PATH_FILES; do
+      [ -n "$part" ] && printf '%s\n' "$part"
+    done
+    [ "$had_f" = 1 ] || set +f
+    return 0
+  fi
   printf '%s\n' /etc/paths /etc/paths.d/* /etc/profile /etc/zprofile \
                 /etc/zshrc /etc/profile.d/* /etc/environment
 }
@@ -375,6 +441,10 @@ path_covered() {
   # directory with a space in it is legal on macOS.
   while IFS= read -r f; do
     [ -f "$f" ] || continue
+    # Readable is part of the test: a root-owned 600 file under /etc/profile.d is routine
+    # on a managed machine, and `read`ing it leaked a Permission denied onto stderr at
+    # every session start. An unreadable file cannot vouch for coverage either way.
+    [ -r "$f" ] || continue
     mentions_user_bin "$f" && return 0
   done < <(system_path_files; rc_files)
   return 1
@@ -382,6 +452,12 @@ path_covered() {
 
 # Have we already added our line to a file this shell reads? Checked before anything else,
 # so a second session neither probes nor appends a duplicate.
+#
+# Deliberate tradeoff: once the mark exists anywhere in the family's files, no session
+# re-probes reachability — so wiring that breaks LATER (say, a new .bash_profile that
+# shadows the .profile holding the mark) stays silent. The alternative is a ~10s
+# login-shell probe at every session start for everyone; removing the marked line re-arms
+# the check. Documented in the README's PATH section.
 marked_already() {
   local f
   while IFS= read -r f; do
@@ -401,10 +477,19 @@ marked_already() {
 # because a system profile is free to print whatever it likes (Ubuntu's prints a sudo
 # hint), and killed after ten seconds so a pathological rc cannot hang the session.
 probe_login_path() {
-  local sh snippet tmp pid waited out
+  local sh base snippet tmp out
+  # The probe EXECUTES this path, and login_shell's answer is environment-derived
+  # (KGAI_LOGIN_SHELL, $SHELL) — so it is gated: only a known shell is run, and only from
+  # an absolute path. A relative path would resolve against the hook's cwd (the project —
+  # anything checked out there could name itself `bash`), so anything not absolute is
+  # re-resolved by NAME on PATH. An unknown shell means "cannot probe" (rc 2), never
+  # "run it and see".
   sh="$(login_shell)"
-  [ -x "$sh" ] || sh="$(command -v "$(basename "$sh")" 2>/dev/null || true)"
-  [ -n "$sh" ] && [ -x "$sh" ] || return 2
+  base="$(basename "$sh")"
+  case "$base" in bash|zsh|fish|sh|dash|ash|ksh) ;; *) return 2 ;; esac
+  case "$sh" in /*) [ -x "$sh" ] || sh="" ;; *) sh="" ;; esac
+  [ -n "$sh" ] || sh="$(command -v "$base" 2>/dev/null || true)"
+  case "$sh" in /*) [ -x "$sh" ] || return 2 ;; *) return 2 ;; esac
   case "$(shell_family)" in
     # fish keeps PATH as a list, not a colon-joined string.
     fish) snippet='printf "%s" "@KGPB@"(string join : $PATH)"@KGPE@"' ;;
@@ -416,13 +501,7 @@ probe_login_path() {
   else
     "$sh" -ic "$snippet" >"$tmp" 2>/dev/null </dev/null &
   fi
-  pid=$!
-  waited=0
-  while kill -0 "$pid" 2>/dev/null; do
-    [ "$waited" -ge 100 ] && { kill -9 "$pid" 2>/dev/null; break; }
-    sleep 0.1; waited=$((waited + 1))
-  done
-  wait "$pid" 2>/dev/null
+  reap_within $! "$PROBE_TIMEOUT"
   out="$(tr -d '\n' < "$tmp" 2>/dev/null)"
   rm -f "$tmp"
   case "$out" in *"@KGPB@"*"@KGPE@"*) ;; *) return 2 ;; esac
@@ -458,31 +537,60 @@ RC_LOCK="$KGAI_HOME/.rc.lock"
 
 _rc_lock_owns() { [ "$(cat "$RC_LOCK/pid" 2>/dev/null)" = "$$" ]; }
 
+# Is the lock abandoned? Three answers feed it, in order of authority:
+#   * a recorded owner that is still ALIVE means never stale — mtime alone used to be the
+#     whole test, and a skewed clock (a network home directory) could then break a live
+#     lock, which is the duplicate-block bug through the back door;
+#   * an mtime strictly older than a minute (so up to ~2 in practice — a writer holds the
+#     lock well under a second) means abandoned;
+#   * with no `find` to ask about age, a recorded owner that is provably GONE is enough —
+#     a lock with no pid at all stays untouchable then, which only errs toward deferring.
+_rc_lock_stale() {
+  local pid
+  pid="$(cat "$RC_LOCK/pid" 2>/dev/null)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 1; fi
+  [ -n "$(find "$RC_LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ] && return 0
+  if ! command -v find >/dev/null 2>&1 && [ -n "$pid" ]; then return 0; fi
+  return 1
+}
+
 # `mkdir` is the sole arbiter: exactly one racing session creates the lock dir, and that
 # session records its pid inside. Acquiring is uncontended in the normal case.
 #
-# The hard part is a lock left behind by a session that was killed while holding it — a
-# live writer holds it for well under a second, so a lock older than a minute is abandoned
-# and must be reclaimed, or the PATH line is never written on that machine again. The
-# reclaim has to be race-free: the naive "if stale: rmdir; mkdir mine" (and even an atomic
-# rename) lets a second reclaimer act on the FRESH lock a first reclaimer just created,
-# because each judged staleness on the OLD lock but acts on whatever sits there now — the
-# reproduced duplicate-block bug. So a separate break-lock serialises the reclaimers: only
-# the one session that creates `.rc.lock.break` removes the stale lock, re-checking under
-# that exclusive hold that it is still the same stale lock. Once it is gone, every session
-# converges on the single atomic `mkdir` again, where only one can win.
+# The hard part is a lock left behind by a session that was killed while holding it — an
+# abandoned lock must be reclaimed, or the PATH line is never written on that machine
+# again. The reclaim has to be race-free: the naive "if stale: rmdir; mkdir mine" (and
+# even an atomic rename) lets a second reclaimer act on the FRESH lock a first reclaimer
+# just created, because each judged staleness on the OLD lock but acts on whatever sits
+# there now — the reproduced duplicate-block bug. So a separate break-lock serialises the
+# reclaimers: only the one session that creates `.rc.lock.break` removes the stale lock,
+# re-checking under that exclusive hold that it is still the same stale lock. Once it is
+# gone, every session converges on the single atomic `mkdir` again, where only one wins.
+#
+# Returns 0 holding the lock, 1 when a live session holds it (defer quietly — that session
+# does the work and reports it), 2 when the lock cannot even be CREATED (an unwritable
+# $KGAI_HOME) — a failure the caller must say out loud, because nothing else will.
 rc_lock_acquire() {
-  mkdir "$RC_LOCK" 2>/dev/null && { printf '%s\n' "$$" > "$RC_LOCK/pid" 2>/dev/null; return 0; }
-  if [ -n "$(find "$RC_LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ] &&
-     mkdir "$RC_LOCK.break" 2>/dev/null; then
+  mkdir -p "$KGAI_HOME" 2>/dev/null
+  mkdir "$RC_LOCK" 2>/dev/null && { printf '%s\n' "$$" 2>/dev/null > "$RC_LOCK/pid"; return 0; }
+  # The break-lock gets the same staleness reclaim as the lock it guards: a reclaimer
+  # killed between its mkdir and rmdir used to leave `.rc.lock.break` behind forever, and
+  # with a stale lock also present no session could ever break it again — PATH wiring
+  # permanently and silently off on that machine, one level down from the lock it fixes.
+  if [ -d "$RC_LOCK.break" ] &&
+     [ -n "$(find "$RC_LOCK.break" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+    rm -rf "$RC_LOCK.break" 2>/dev/null
+  fi
+  if _rc_lock_stale && mkdir "$RC_LOCK.break" 2>/dev/null; then
     # Sole breaker. The stale lock cannot have been refreshed — it still exists, so every
     # other session's mkdir is failing — so removing it now is safe.
-    [ -n "$(find "$RC_LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ] && rm -rf "$RC_LOCK" 2>/dev/null
+    _rc_lock_stale && rm -rf "$RC_LOCK" 2>/dev/null
     rmdir "$RC_LOCK.break" 2>/dev/null
   fi
   # One clean attempt at the freed name; whoever loses this atomic mkdir defers.
-  mkdir "$RC_LOCK" 2>/dev/null && { printf '%s\n' "$$" > "$RC_LOCK/pid" 2>/dev/null; return 0; }
-  return 1
+  mkdir "$RC_LOCK" 2>/dev/null && { printf '%s\n' "$$" 2>/dev/null > "$RC_LOCK/pid"; return 0; }
+  [ -d "$RC_LOCK" ] && return 1
+  return 2
 }
 
 # Only the recorded owner releases, so a session that lost the race can never delete the
@@ -494,14 +602,21 @@ rc_lock_release() {
 }
 
 # Appends one marked PATH line to the file the user's terminal reads. Returns 0 only when
-# it actually added it, so the status line mentions it exactly once.
+# it actually added it (so the status line mentions it exactly once), 1 when there was
+# nothing to do, and 2 when the line is NEEDED and could not be written — the caller must
+# report that, because "could not write" folded into "nothing to do" is how this failure
+# stayed silent for a release.
 ensure_path_entry() {
   PATH_RC=""
   marked_already && return 1
   path_line_possible || return 1
+  local lrc
+  rc_lock_acquire; lrc=$?
+  # An uncreatable lock is a write failure (unwritable $KGAI_HOME), not contention.
+  [ "$lrc" = 2 ] && return 2
   # Losing the race is not a failure: the session that holds the lock is doing the same
   # work, and its status line reports it.
-  rc_lock_acquire || return 1
+  [ "$lrc" = 0 ] || return 1
   _ensure_path_entry_locked; local rc=$?
   rc_lock_release
   return $rc
@@ -521,7 +636,8 @@ _ensure_path_entry_locked() {
     local pr
     path_reachable; pr=$?
     # Confirmed by a real shell: remember it, so later sessions skip the probe entirely.
-    [ "$pr" = 0 ] && { printf '%s\n' "$USER_BIN" > "$PATH_OK_STAMP" 2>/dev/null; return 1; }
+    # (stderr redirect first — a failed stamp write must not leak bash's own error.)
+    [ "$pr" = 0 ] && { printf '%s\n' "$USER_BIN" 2>/dev/null > "$PATH_OK_STAMP"; return 1; }
     # No probe available (unusual shell, no mktemp): the scan is the best evidence there is.
     [ "$pr" = 2 ] && return 1
   else
@@ -532,15 +648,19 @@ _ensure_path_entry_locked() {
   local rc
   rc="$(rc_target)"
   [ -n "$rc" ] || return 1
-  mkdir -p "$(dirname "$rc")" 2>/dev/null || return 1
-  printf '\n%s\n%s\n' "$KGAI_MARK" "$(path_line)" >> "$rc" 2>/dev/null || return 1
+  # From here on the line is NEEDED, so failing to land it is rc 2, distinct from every
+  # "nothing to do" above. The stderr redirect comes FIRST: redirections apply left to
+  # right, and with `>> file` first a refused append (read-only profile) printed bash's
+  # own Permission denied before the 2>/dev/null could catch it — at every session start.
+  mkdir -p "$(dirname "$rc")" 2>/dev/null || return 2
+  printf '\n%s\n%s\n' "$KGAI_MARK" "$(path_line)" 2>/dev/null >> "$rc" || return 2
   PATH_RC="$rc"
   return 0
 }
 
 ensure_on_path() {
   PATH_NOTE=""
-  local w note=""
+  local w ep note=""
   write_launcher; w=$?
   if [ "$w" = 2 ]; then
     note="note: \`$USER_BIN/kg\` already exists and is not ours, so it was left alone — the plugin's engine is at $BIN. Remove or rename that file and the next session installs the launcher. "
@@ -550,22 +670,56 @@ ensure_on_path() {
 
   # Deliberately unconditional. Whether the launcher could be written and whether
   # $USER_BIN is on PATH are separate problems with separate fixes, and letting the first
-  # one skip the second is what left the profile line unwritten on every machine that
+  # one skip the second is what left the PATH line unwritten on every machine that
   # already had some `kg` in ~/.local/bin — including our own pre-1.4.0 symlink.
-  if ensure_path_entry; then
+  ensure_path_entry; ep=$?
+  if [ "$ep" = 0 ]; then
     local pr
+    # A second probe on a transition session (the first ran inside the covered branch of
+    # _ensure_path_entry_locked) is deliberate: that one measured the profile BEFORE the
+    # append, this one verifies the append took. Two states, two questions.
     path_reachable; pr=$?
     if [ "$pr" = 1 ]; then
       # Wired, and a real terminal still does not see it. Say so. Announcing success here
       # is exactly what made this class of failure invisible for a whole release.
-      note="${note}⚠ \`kg\` is NOT on your terminal's PATH yet — the line went into $PATH_RC, but a fresh shell still does not pick it up. Add this to the profile your terminal really reads: $(path_line) "
+      note="${note}⚠ \`kg\` is NOT on your terminal's PATH yet — the line went into $PATH_RC, but a fresh shell still does not pick it up. Add this to the profile your terminal actually reads: $(path_line) "
+    elif [ "$pr" = 2 ]; then
+      # "Could not find out" is reported as exactly that — the probe's own contract says
+      # it must never be dressed up as either success or failure.
+      note="${note}the PATH line for \`kg\` was added to $PATH_RC — whether a new terminal picks it up could not be verified. If \`kg\` is not found there, run: $(path_line) "
     elif [ "$w" = 0 ]; then
       note="${note}\`kg\` is now on your PATH via $USER_BIN (added to $PATH_RC) — new terminals have it; in one that is already open, run: $(path_line) "
     else
-      note="${note}$USER_BIN was added to your PATH (in $PATH_RC) for when the launcher can be installed. "
+      note="${note}$USER_BIN was added to your PATH (in $PATH_RC) so the launcher is found once it can be installed. "
     fi
+  elif [ "$ep" = 2 ]; then
+    # The line is needed and could not be written — a read-only profile, or a $KGAI_HOME
+    # the lock cannot even be created in. The one line the user can act on:
+    note="${note}⚠ could not add \`$USER_BIN\` to your PATH (profile or \$KGAI_HOME not writable) — add this line to the profile your terminal actually reads: $(path_line) "
   fi
-  PATH_NOTE="$note"
+  # One status LINE is the contract — SessionStart stdout reaches the agent as a line —
+  # and two of the interpolated values ($USER_BIN, $HOME) may legally contain a newline.
+  # They are data, so they are flattened, not trusted.
+  PATH_NOTE="$(printf '%s' "$note" | tr '\n' ' ')"
+}
+
+# Every store-reading engine call goes through here: in the project root (a call that ran
+# in the hook's own cwd once reported another repository's conflicts), with the native lib
+# on the loader path, and time-boxed — one wedged engine used to stall session start for
+# the hook's whole 180s budget. Yesterday's copy-pasted incantation is also how the cwd
+# bug happened: one call site drifted from the pattern. stdout is the engine's; stderr is
+# discarded; the exit status is the engine's own, or 137 after a kill.
+run_engine() {
+  local tmp rc
+  tmp="$(mktemp "${TMPDIR:-/tmp}/kgai-eng.XXXXXX" 2>/dev/null)" || return 1
+  ( cd "$(project_root)" && KGAI_HOME="$KGAI_HOME" \
+      LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
+      DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" \
+      "$BIN" "$@" ) >"$tmp" 2>/dev/null &
+  reap_within $! "$ENGINE_TIMEOUT"; rc=$?
+  cat "$tmp" 2>/dev/null
+  rm -f "$tmp" 2>/dev/null
+  return "$rc"
 }
 
 ensure_store() {
@@ -573,15 +727,8 @@ ensure_store() {
   # than testing <project>/.kgai/store: the store may be configured elsewhere entirely
   # (the `store` setting, KGAI_STORE — several repos sharing one graph), and a path
   # guessed here would re-init on every session and miss the shared store completely.
-  local proj
-  proj="$(project_root)"
-  ( cd "$proj" && KGAI_HOME="$KGAI_HOME" \
-      LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
-      DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" status 2>/dev/null |
-      grep -q '"initialized": *false' ) || return 0
-  ( cd "$proj" && KGAI_HOME="$KGAI_HOME" \
-      LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
-      DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" init ) >/dev/null 2>&1 || true
+  run_engine status | grep -q '"initialized": *false' || return 0
+  run_engine init >/dev/null 2>&1 || true
 }
 
 # An installed file is not a working engine. `kg version` is the cheapest command that
@@ -591,16 +738,28 @@ ensure_store() {
 # for the rest of the session failed silently behind `|| true`.
 ENGINE_ERR=""
 engine_works() {
-  local out rc
-  out="$(KGAI_HOME="$KGAI_HOME" LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
-           DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" version 2>&1)"
-  rc=$?
+  local tmp out rc
+  # `version` reads no store, so no cd — but the same time-box as every other engine call:
+  # an engine that HANGS (a wedged filesystem, a launcher looping on itself) used to hold
+  # this line, and with it the whole session start, until the hook's 180s cap fired.
+  tmp="$(mktemp "${TMPDIR:-/tmp}/kgai-eng.XXXXXX" 2>/dev/null)" || return 1
+  KGAI_HOME="$KGAI_HOME" LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
+    DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" version >"$tmp" 2>&1 &
+  reap_within $! "$ENGINE_TIMEOUT"; rc=$?
+  out="$(cat "$tmp" 2>/dev/null)"
+  rm -f "$tmp" 2>/dev/null
   if [ "$rc" = 0 ]; then ENGINE_ERR=""; return 0; fi
   # One line, first non-empty: dyld and the loader are verbose, the status line is not.
   # A signal kill (9/SIGKILL → 137) prints nothing we can capture; on macOS that is
   # almost always the OS refusing a binary whose signature it does not accept.
-  ENGINE_ERR="$(printf '%s' "$out" | grep -v '^[[:space:]]*$' | head -n1)"
-  [ -n "$ENGINE_ERR" ] || ENGINE_ERR="exited with code $rc"
+  # The engine's stderr lands in the status line the agent reads, so it is treated as
+  # data: one line, control characters stripped, length capped.
+  ENGINE_ERR="$(printf '%s' "$out" | grep -v '^[[:space:]]*$' | head -n1 |
+                  tr -d '\000-\037' | cut -c1-300)"
+  if [ -z "$ENGINE_ERR" ]; then
+    if [ "$rc" = 137 ]; then ENGINE_ERR="did not respond within ${ENGINE_TIMEOUT}s"
+    else ENGINE_ERR="exited with code $rc"; fi
+  fi
   return 1
 }
 
@@ -613,10 +772,7 @@ engine_works() {
 # where a silent sync failure costs the most.
 autosync_warning() {
   local lastsync root
-  root="$( cd "$(project_root)" && KGAI_HOME="$KGAI_HOME" \
-      LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
-      DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" config 2>/dev/null |
-      sed -n 's/.*"store_root": *"\([^"]*\)".*/\1/p' )"
+  root="$(run_engine config | sed -n 's/.*"store_root": *"\([^"]*\)".*/\1/p')"
   lastsync="${root:-$(project_root)/.kgai/store}/last-autosync.json"
   if [ -f "$lastsync" ] && grep -qE '"ok": *false|"detail":' "$lastsync" 2>/dev/null; then
     printf '%s' "⚠ background team sync did not sync on its last attempt — tell the user to run \`kg sync\` to see why. "
@@ -626,17 +782,18 @@ autosync_warning() {
 report_ready() {
   ensure_on_path
   ensure_store
-  echo "$WANT" > "$KGAI_HOME/.srcver"
-  # A compact status line, plus a heads-up if there are unresolved conflict branches.
   local extra="$PATH_NOTE"
+  if ! echo "$WANT" 2>/dev/null > "$KGAI_HOME/.srcver"; then
+    # Without the fingerprint every later session decides the engine is out of date and
+    # downloads it again — that gets said once, here, instead of silently paid at every
+    # session start until someone wonders why starting is slow.
+    extra="${extra}⚠ could not record the installed version at $KGAI_HOME/.srcver — the engine will be re-downloaded at every session start until $KGAI_HOME is writable. "
+  fi
+  # A heads-up if there are unresolved conflict branches. run_engine answers from the
+  # project's root — without the cd this counted the conflicts of whatever directory the
+  # hook happened to start in, observed reporting one repository's conflicts in another.
   local conf
-  # In the project's root, like ensure_store and the sync warning. Without the cd this
-  # counted the conflicts of whatever directory the hook happened to start in — observed
-  # reporting one repository's conflicts during a session in another.
-  conf="$( cd "$(project_root)" && KGAI_HOME="$KGAI_HOME" \
-      LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}" \
-      DYLD_LIBRARY_PATH="$LIBDIR:${DYLD_LIBRARY_PATH:-}" "$BIN" conflicts 2>/dev/null |
-      grep -o '"count": *[0-9]*' | grep -o '[0-9]*' || true )"
+  conf="$(run_engine conflicts | grep -o '"count": *[0-9]*' | grep -o '[0-9]*' || true)"
   if [ -n "$conf" ] && [ "$conf" != "0" ]; then
     extra="${extra}⚠ $conf unresolved decision conflict(s) — run /kgai:kg-conflicts. "
   fi
@@ -661,6 +818,10 @@ case "$(host_os)" in
     status "⚠️ ENGINE NOT INSTALLED — Windows is not supported natively (Git Bash reports $(uname -s)). Run Claude Code inside WSL, where kgai installs as on any Linux."
     exit 0 ;;
 esac
+
+# Only past both guards: a refused platform (just told the engine cannot exist here) must
+# not be left with an empty ~/.kgai, and sourcing the library must create nothing at all.
+mkdir -p "$KGAI_HOME/bin" "$LIBDIR"
 
 WANT="$(srcver)"
 HAVE="$(cat "$KGAI_HOME/.srcver" 2>/dev/null || true)"
@@ -699,12 +860,22 @@ if [ -n "${KG_RELEASE_BASE:-}" ]; then
     case "$arch" in x86_64|amd64) arch=x86_64;; aarch64|arm64) arch=aarch64;; esac
     lib_asset="libkuzu-$os-$arch.so"; lib_file="libkuzu.so"
   fi
-  if curl -fsSL -o "$KGAI_HOME/bin/kg.new" "$KG_RELEASE_BASE/kg-$os-$arch" 2>/dev/null \
-     && curl -fsSL -o "$LIBDIR/$lib_file.new" "$KG_RELEASE_BASE/$lib_asset" 2>/dev/null \
-     && verify_asset "$KGAI_HOME/bin/kg.new" "kg-$os-$arch" \
-     && verify_asset "$LIBDIR/$lib_file.new" "$lib_asset"; then
-    mv "$KGAI_HOME/bin/kg.new" "$BIN"; chmod +x "$BIN"
-    mv "$LIBDIR/$lib_file.new" "$LIBDIR/$lib_file"
+  # Unique temps via mktemp, never a fixed "$BIN.new": two sessions downloading together
+  # interleaved their curl writes into one shared file, and either could publish (mv)
+  # bytes the other was still writing — after the checksum had passed on an earlier state
+  # of that file. The name keeps the kg.new. prefix so one glob still matches every temp.
+  tmp_kg="$(mktemp "$KGAI_HOME/bin/kg.new.XXXXXX" 2>/dev/null)" || tmp_kg=""
+  tmp_lib="$(mktemp "$LIBDIR/$lib_file.new.XXXXXX" 2>/dev/null)" || tmp_lib=""
+  if [ -n "$tmp_kg" ] && [ -n "$tmp_lib" ] \
+     && curl -fsSL -o "$tmp_kg" "$KG_RELEASE_BASE/kg-$os-$arch" 2>/dev/null \
+     && curl -fsSL -o "$tmp_lib" "$KG_RELEASE_BASE/$lib_asset" 2>/dev/null \
+     && verify_asset "$tmp_kg" "kg-$os-$arch" \
+     && verify_asset "$tmp_lib" "$lib_asset"; then
+    # 755 before the rename, and explicit: mktemp creates 0600, and `+x` under the usual
+    # umask would publish 0711 — unreadable, so unrunnable, for other users of the machine.
+    chmod 755 "$tmp_kg" 2>/dev/null
+    mv "$tmp_kg" "$BIN"
+    mv "$tmp_lib" "$LIBDIR/$lib_file"
     if engine_works; then
       report_ready "prebuilt $os-$arch"
       exit 0
@@ -713,7 +884,7 @@ if [ -n "${KG_RELEASE_BASE:-}" ]; then
     # one remaining self-heal (it produces a binary for THIS machine), so try it.
     status "prebuilt $os-$arch does not run on this machine ($ENGINE_ERR) — trying a source build…"
   else
-    rm -f "$KGAI_HOME/bin/kg.new" "$LIBDIR/$lib_file.new"
+    rm -f ${tmp_kg:+"$tmp_kg"} ${tmp_lib:+"$tmp_lib"} 2>/dev/null || true
     status "prebuilt download failed, falling back to source build…"
   fi
 fi

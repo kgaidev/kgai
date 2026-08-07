@@ -55,7 +55,7 @@ t_no_trailing_newline_profile() {
   ensure_path_entry
   assert_prefix_preserved "a file with no final newline keeps its bytes" \
     "$SB/original" "$HOME/.bashrc"
-  # The appended block must still be a line of its own, not glued to their last one.
+  # The appended block must still be a line of its own, not glued to the file's last line.
   assert_file_hasnt "the last line is not glued to ours" "$HOME/.bashrc" 'vim#'
   assert_file_has "and our line is intact" "$HOME/.bashrc" 'export PATH='
 }
@@ -124,15 +124,19 @@ t_readonly_profile_is_not_corrupted() {
   load; host_os() { echo Linux; }
   realistic_profile > "$HOME/.bashrc"; snapshot "$HOME/.bashrc"
   chmod 444 "$HOME/.bashrc"
-  ensure_path_entry; assert_rc "a read-only profile is reported, not forced" $? 1
+  ensure_path_entry 2>"$SB/ro-err"
+  assert_rc "a read-only profile is a write failure, not forced" $? 2
   chmod 644 "$HOME/.bashrc"
   assert_files_identical "and left byte for byte identical" "$SB/original" "$HOME/.bashrc"
+  assert_eq "with nothing leaked to stderr" "$(cat "$SB/ro-err" 2>/dev/null)" ""
 }
 
 t_profile_is_a_directory() {
   load; host_os() { echo Linux; }
   mkdir -p "$HOME/.bashrc"
-  ensure_path_entry; assert_rc "a directory where the profile should be does not crash" $? 1
+  ensure_path_entry 2>"$SB/dir-err"
+  assert_rc "a directory in the profile's place is a write failure, not a crash" $? 2
+  assert_eq "reported without stderr noise" "$(cat "$SB/dir-err" 2>/dev/null)" ""
 }
 
 # Switching shells must not rewrite the old shell's profile.
@@ -270,11 +274,16 @@ t_concurrent_sessions_with_stale_lock() {
   load; host_os() { echo Linux; }
   touch -t 200001010000 "$KGAI_HOME" 2>/dev/null ||
     { skip "touch -t unavailable"; return 0; }
-  local round i
+  # A pid that is REALLY dead, not a guessed number: staleness now checks the recorded
+  # owner for liveness, and a guessed pid that happens to exist would make the lock
+  # unbreakable — correctly, but not what this test is about.
+  local dead round i
+  sh -c ':' & dead=$!
+  wait "$dead" 2>/dev/null
   for round in 1 2 3 4 5 6 7 8 9 10; do
     : > "$HOME/.bashrc"
     rm -rf "$KGAI_HOME/.rc.lock"
-    mkdir -p "$KGAI_HOME/.rc.lock"; printf '99999\n' > "$KGAI_HOME/.rc.lock/pid"
+    mkdir -p "$KGAI_HOME/.rc.lock"; printf '%s\n' "$dead" > "$KGAI_HOME/.rc.lock/pid"
     touch -t 200001010000 "$KGAI_HOME/.rc.lock" 2>/dev/null   # aged: a killed session's lock
     for i in 1 2 3 4 5 6 7 8; do
       ( . "$REPO/scripts/install.sh"
@@ -320,6 +329,35 @@ t_stale_lock_is_broken() {
     { skip "touch -t unavailable"; return 0; }
   ensure_path_entry; assert_rc "a stale lock is broken" $? 0
   assert_file_has "and the line is written" "$HOME/.bashrc" "$KGAI_MARK"
+}
+
+# The reclaimer itself can be killed — between creating `.rc.lock.break` and removing it.
+# That orphaned break dir used to be permanent: no session could ever become the breaker
+# again, so with the stale lock also still there, the PATH line was never written on that
+# machine again, silently. The break dir gets the same staleness reclaim as the lock.
+t_orphaned_break_lock_is_reclaimed() {
+  load; host_os() { echo Linux; }
+  mkdir -p "$KGAI_HOME/.rc.lock" "$KGAI_HOME/.rc.lock.break"
+  touch -t 200001010000 "$KGAI_HOME/.rc.lock" 2>/dev/null ||
+    { skip "touch -t unavailable"; return 0; }
+  touch -t 200001010000 "$KGAI_HOME/.rc.lock.break" 2>/dev/null
+  ensure_path_entry; assert_rc "a dead reclaimer's leftovers self-heal" $? 0
+  assert_file_has "and the line is written" "$HOME/.bashrc" "$KGAI_MARK"
+  assert_absent "the orphaned break dir is gone" "$KGAI_HOME/.rc.lock.break"
+}
+
+# Staleness is not mtime alone: a lock whose recorded owner is still ALIVE is live no
+# matter what the clock says (a skewed network home directory made live locks look old),
+# and breaking it would readmit the duplicate-block bug.
+t_live_lock_is_not_broken_despite_age() {
+  load; host_os() { echo Linux; }
+  mkdir -p "$KGAI_HOME/.rc.lock"
+  printf '%s\n' "$$" > "$KGAI_HOME/.rc.lock/pid"     # ourselves: provably alive
+  touch -t 200001010000 "$KGAI_HOME/.rc.lock" 2>/dev/null ||
+    { skip "touch -t unavailable"; return 0; }
+  ensure_path_entry; assert_rc "an old-looking lock with a live owner defers" $? 1
+  assert_exists "the lock is left in place" "$KGAI_HOME/.rc.lock"
+  assert_absent "and nothing was written" "$HOME/.bashrc"
 }
 
 t_lock_is_released() {
@@ -404,9 +442,10 @@ t_stamp_write_failure_is_survivable() {
   fake_shell "/usr/bin:$KGAI_USER_BIN:/bin"
   printf 'export PATH="$HOME/.local/bin:$PATH"\n' > "$HOME/.bashrc"
   mkdir -p "$KGAI_HOME/.path-ok"        # a dir, so `printf > .path-ok` cannot succeed
-  ensure_path_entry
+  ensure_path_entry 2>"$SB/stamp-err"
   assert_rc "a failed stamp write still returns cleanly (covered → no append)" $? 1
   assert_count "and nothing is appended" "$HOME/.bashrc" "$KGAI_MARK" 0
+  assert_eq "and nothing leaks to stderr" "$(cat "$SB/stamp-err" 2>/dev/null)" ""
 }
 
 # ======================================================================================
@@ -438,6 +477,8 @@ run 'stale lock + concurrency still writes one'      t_concurrent_sessions_with_
 run 'eight concurrent launcher writes are whole'     t_concurrent_launchers_write_once
 run 'a held lock defers'                             t_held_lock_defers
 run 'a stale lock is broken'                         t_stale_lock_is_broken
+run "a dead reclaimer's break-lock self-heals"       t_orphaned_break_lock_is_reclaimed
+run 'a live lock is never broken, whatever its age'  t_live_lock_is_not_broken_despite_age
 run 'the lock is released'                           t_lock_is_released
 run 'the lock is released after a failure'           t_lock_released_after_failure
 run 'five sequential runs never grow the file'       t_repeated_runs_never_grow
@@ -447,6 +488,6 @@ section 'blast radius'
 run 'nothing is written outside HOME'                t_writes_nothing_outside_home
 run 'the engine is never rewritten'                  t_engine_is_never_rewritten
 run "a foreign kg is never rewritten"                t_foreign_kg_is_never_rewritten
-run 'an unwritable KGAI_HOME is survivable'          t_stamp_write_failure_is_survivable
+run 'a failed stamp write is survivable'             t_stamp_write_failure_is_survivable
 
 summary
