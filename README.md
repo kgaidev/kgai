@@ -88,10 +88,13 @@ To record or query by hand:
 
 The same setup also puts `kg` in `~/.local/bin`, so the CLI works in your own terminal and
 not only inside Claude Code. If that directory isn't on the `PATH` your terminal builds —
-which it confirms by asking your login shell, not just by grepping its profile — the
-installer appends one marked line to the profile that shell actually reads. Open a new terminal and
-`kg version` answers; if anything about that didn't work, the session's status line says so
-instead of reporting success.
+which the installer confirms by asking your login shell, not just by grepping that shell's
+profile — it appends one marked PATH line to the profile the shell actually reads. Open a
+new terminal and `kg version` answers; if anything about that didn't work, the session's
+status line says so instead of reporting success. Once the marked line is in place the
+check is not repeated, so wiring that breaks *later* (say, a new `.bash_profile` that
+shadows the `.profile` holding the line) goes unnoticed — delete the marked line and the
+next session re-verifies from scratch.
 
 ### Install the CLI by hand
 
@@ -373,7 +376,7 @@ process environment (which carries that directory even when your terminal doesn'
 plain-text read of your shell profile, where a commented-out mention (uv, pipx and pip
 all leave one behind) counted as "already handled" — as did an existing `kg` in that
 directory, including the symlink an older by-hand install of *ours* leaves there. In
-every case v1.4.0 skipped the profile line and still reported `engine ready`, and it
+every case v1.4.0 skipped the PATH line and still reported `engine ready`, and it
 reached the same wrong conclusion at every session start, so it never repaired itself.
 Later versions ask a real shell instead, recognise their own leftovers, and warn instead
 of claiming success — update the plugin (`claude plugin update kgai@kgai-marketplace`)

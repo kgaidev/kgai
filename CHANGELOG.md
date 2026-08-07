@@ -124,7 +124,7 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
 ### Fixed
 - **`kg` reaches your own terminal on the machines where v1.4.0 gave up.** v1.4.0 wrote
-  the launcher and the profile line, then decided whether they were needed from evidence
+  the launcher and the PATH line, then decided whether they were needed from evidence
   that could not answer the question — and got it wrong in four independent ways, each of
   them silently, behind a status line that said `engine ready`:
   - It asked **the hook process's own PATH**. That is Claude Code's environment, not your
@@ -134,12 +134,12 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
     `command not found: kg`.
   - It also read the shell profile **as plain text**, so a **commented-out** mention of
     `~/.local/bin` counted as "already on PATH". uv, pipx and pip all leave one behind
-    (`# WARNING: … is not on PATH` is pip's own wording), so the profile line was never
+    (`# WARNING: … is not on PATH` is pip's own wording), so the PATH line was never
     written and never would be — the same wrong conclusion was reached at every
     subsequent session start.
   - A mention that is real but never takes effect — inside a branch that does not fire, or
     overwritten by a later `export PATH=…` — reads the same as a working one on paper.
-  - An **existing `kg` in `~/.local/bin` cancelled the PATH fix entirely**, because one
+  - An **existing `kg` in `~/.local/bin` cancelled the PATH wiring entirely**, because one
     early `return` covered two unrelated decisions. Worse, "existing" included our own
     leftovers: the symlink a pre-1.4.0 by-hand install leaves behind points at our engine,
     but a search for the string `kgai launcher` inside a 14 MB binary does not match it, so
@@ -151,7 +151,7 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   and the confirmed verdict is cached so later sessions cost nothing). The file scan —
   system PATH configuration plus the login shell's own profiles, matching `~/…`, `$HOME/…`
   and the expanded spelling — remains as a cheap pre-filter and the fallback, and counts
-  only uncommented text. The launcher and the PATH entry are decided independently, and
+  only uncommented text. The launcher and the PATH line are decided independently, and
   our own symlinks and engine copies are recognised and replaced while a genuinely foreign
   `kg` is still left alone.
 - **The PATH line is written as a quoted literal, so a directory name cannot become
@@ -197,11 +197,14 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   success while `kg` was once again unreachable — the very silent failure this release
   exists to kill, reintroduced by the optimisation. The record now only ever skips the
   probe *while the coverage is still present*, and is dropped the moment it is gone.
-- **Windows says "use WSL" instead of "install Go".** The Git-Bash refusal sat after the
-  Go and C-compiler checks and the native-lib fetch, so a real Windows user hit
-  "install Go (https://go.dev/dl)" or "github.com unreachable" — never the accurate message
-  — and the WSL text was dead code. The refusal now comes first, before any install
-  attempt.
+- **Windows is refused accurately: "use WSL", up front.** Claude Code runs these hooks
+  through Git Bash, where `uname` reports `MINGW64_NT-…` and no native engine exists. The
+  refusal used to sit after the Go and C-compiler checks and the native-lib fetch, so a
+  real Windows user hit "install Go (https://go.dev/dl)" or "github.com unreachable" —
+  never the accurate message, which was dead code. The refusal now comes first, before
+  any install attempt, and points at WSL. It is covered by the test suite on the
+  Linux/macOS runners with a shadowed `uname` (there is no windows-latest CI job —
+  Windows is not a supported target).
 - **Executing the installer with `KGAI_INSTALL_LIB` set exits cleanly.** The test-only
   library guard used a bare `return`, which errors when the script is run rather than
   sourced; it now exits cleanly in both cases (no effect on the SessionStart hook, which
@@ -221,7 +224,7 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   wiring PATH, the installer asks a real shell whether `kg` is actually reachable — when
   it is not, the status line is a warning with the exact line to paste, and not being able
   to check (an unusual shell, no `mktemp`) is reported as neither success nor failure.
-- **The profile line lands in the file your terminals read.** Two separate mistakes hid
+- **The PATH line lands in the file your terminals read.** Two separate mistakes hid
   here. The shell was taken from `$SHELL`, which is merely whatever started Claude Code —
   on a Mac whose Terminal windows are zsh it is often `/bin/bash`, and the line went to
   `.bash_profile`, which zsh never reads; the login shell now comes from the account
@@ -232,11 +235,6 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   stopped `.profile` from being read at all. The line now goes to the file the shell
   already reads (`.bashrc` on Linux, where a terminal window is not a login shell), and a
   new one is created only when none exists.
-- **Windows says what it is instead of "unsupported platform".** Claude Code runs these
-  hooks through Git Bash, where `uname` reports `MINGW64_NT-…`; there is no native engine
-  for it, and the message now says so and points at WSL. The refusal and the Git-Bash PATH
-  logic are covered by the test suite on the Linux/macOS runners with a shadowed `uname`
-  (there is no windows-latest CI job — Windows is not a supported target).
 - **Sync cannot commit the cloud token, even when the store's ignore file is wrong.**
   **Upgrading with a git remote: check for a leaked token.** Every version whose config
   holds a cloud token — v0.1.4, where `cloud_token` was introduced, through v1.4.0 —
@@ -283,6 +281,31 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   recording which decision shaped which element, so the canonical digest — the
   replay-determinism check — could not detect a divergence in the relationship the whole
   graph is built on.
+- **Two sessions downloading the engine together can no longer corrupt it.** The download
+  landed in one fixed temp file (`kg.new`), so two session starts racing each other
+  interleaved their writes into it — and either could publish bytes the other was still
+  writing, after the checksum had passed on an earlier state of the file. Each download
+  now gets its own unique temp, verified and renamed into place atomically.
+- **A wedged engine no longer stalls session start.** Every `kg` call the SessionStart
+  hook makes (the smoke test, store init, the conflict count, the sync warning) is now
+  time-boxed the way the login-shell probe always was. One hung engine — a locked store,
+  a wedged filesystem, a binary that loops — used to hold the session for the hook's
+  whole 180-second budget; now it is reported as "not running", with the timeout named.
+- **Failures the installer used to swallow are said out loud.** A read-only shell profile,
+  a `$KGAI_HOME` the lock cannot be created in, and a fingerprint that cannot be recorded
+  (which re-downloads the engine at every session start) each get a ⚠ status note naming
+  the failure and the one-line fix — previously all three folded into "nothing to do" and
+  the session said nothing at all. With HOME unset, the hook now explains itself instead
+  of dying with a bare `HOME: unbound variable`.
+- **Launcher ownership is claimed by its header line, not a substring.** Any file in the
+  user bin that merely *mentioned* "kgai launcher" was adopted as ours and overwritten
+  (since v1.4.0); ownership now requires the launcher's own opening line. Pointing
+  `KGAI_USER_BIN` at the engine's own directory is also survivable now — the launcher
+  used to overwrite the engine with a script that execs itself forever.
+- **A refused platform is not left with an empty `~/.kgai`.** The skeleton used to be
+  created before the Windows refusal (and before the library-mode guard), so machines
+  that were just told the engine cannot exist here still got an install home.
+
 ## [1.4.0] - 2026-08-04
 
 ### Fixed
