@@ -4,6 +4,20 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [1.5.2] - 2026-08-16
+
+### Security
+- **Go 1.25.13 — five reachable standard-library vulnerabilities closed.** The daily
+  govulncheck run flagged `net/url` (quadratic `resolvePath`), `crypto/tls` (unbounded
+  post-handshake messages), `encoding/xml` and `encoding/asn1` (no recursion depth limit)
+  and `net/http` (Punycode label handling), all present in the go1.25.12 toolchain the
+  engine was built with. Every call path govulncheck reported ran through the remote
+  layer — `s3Store.Get`, and the cloud broker's `Get`/`Put` — so what could reach the
+  vulnerable code was data returned by whatever S3 endpoint or broker a store is pointed
+  at; a store that never syncs never calls them. Nothing else changed: no dependency
+  moved, no behavior differs, and the fix is the `go` directive in `src/go.mod`, which CI
+  single-sources through `go-version-file`. govulncheck is clean on the built toolchain.
+
 ## [1.5.1] - 2026-08-07
 
 ### Added
