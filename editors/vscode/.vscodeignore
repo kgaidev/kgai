@@ -1,0 +1,9 @@
+# Only what the extension needs at run time goes into the package.
+**
+!dist/src/**
+!media/**
+!bin/**
+!README.md
+!CHANGELOG.md
+!LICENSE
+!package.json

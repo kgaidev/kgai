@@ -174,6 +174,15 @@ In headless testing this held up across models: structural refactors auto-record
 when the model was blocked from recording on its own, the hook still captured every time;
 trivial edits recorded nothing even when nudged.
 
+### See it in your editor
+
+The **kgai extension for VS Code** (and the editors built on it — Cursor, Windsurf)
+puts the project's decisions in the sidebar: search and exact filters over the log,
+elements with their history, contested elements, people, an overview with charts. It
+finds the store as `kg` does and only reads it — it ships its own small reader, so
+nothing else is installed and an open editor can never collide with the engine. It
+lives in [editors/vscode](editors/vscode/); packages are built by CI, not yet published.
+
 ## Under the hood
 
 The nodes are **domain elements** (features, services, business objects) joined by links; a

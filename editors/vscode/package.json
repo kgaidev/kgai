@@ -1,0 +1,261 @@
+{
+  "name": "kgai",
+  "displayName": "kgai — the decisions of this project",
+  "description": "Browse the kgai knowledge graph of the open project: decisions with exact filters, elements, contested elements and people. Read-only, no AI, one fixed order.",
+  "version": "0.1.0",
+  "publisher": "kgaidev",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kgaidev/kgai",
+    "directory": "editors/vscode"
+  },
+  "homepage": "https://kgai.dev",
+  "bugs": {
+    "url": "https://github.com/kgaidev/kgai/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "kgai",
+    "knowledge graph",
+    "decisions",
+    "architecture",
+    "claude code"
+  ],
+  "main": "./dist/src/extension.js",
+  "activationEvents": [
+    "workspaceContains:.kgai/store/kg.config.json",
+    "workspaceContains:.kgairc"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kgai",
+          "title": "kgai",
+          "icon": "media/kgai.svg"
+        }
+      ]
+    },
+    "views": {
+      "kgai": [
+        {
+          "id": "kgai.decisions",
+          "name": "Decisions",
+          "contextualTitle": "kgai decisions"
+        },
+        {
+          "id": "kgai.elements",
+          "name": "Elements",
+          "contextualTitle": "kgai elements"
+        },
+        {
+          "id": "kgai.conflicts",
+          "name": "Conflicts",
+          "contextualTitle": "kgai conflicts"
+        },
+        {
+          "id": "kgai.people",
+          "name": "People",
+          "contextualTitle": "kgai people"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "kgai.decisions",
+        "contents": "No knowledge graph in this folder yet.\nkg keeps a project's decisions in `.kgai/store` (or where `KGAI_STORE`, an approved `.kgairc` or `~/.kgai/config.json` point). Record the first one with the kgai plugin for Claude Code, or show another project.\n[Open Project Folder…](command:kgai.openFolder)\n[How kgai works](https://kgai.dev)",
+        "when": "!kgai.hasStore && !kgai.readerMissing"
+      },
+      {
+        "view": "kgai.decisions",
+        "contents": "The reader `kgread` could not be started. Set `kgai.readerPath` to a kgread binary, or reinstall the extension.\n[Open Settings](command:workbench.action.openSettings?%22kgai.readerPath%22)",
+        "when": "kgai.readerMissing"
+      }
+    ],
+    "commands": [
+      {
+        "command": "kgai.overview",
+        "title": "Overview",
+        "category": "kgai",
+        "icon": "$(home)"
+      },
+      {
+        "command": "kgai.search",
+        "title": "Search Decisions",
+        "category": "kgai",
+        "icon": "$(search)"
+      },
+      {
+        "command": "kgai.filter",
+        "title": "Filter Decisions",
+        "category": "kgai",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "kgai.clearFilters",
+        "title": "Clear Filters",
+        "category": "kgai",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "kgai.refresh",
+        "title": "Refresh",
+        "category": "kgai",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "kgai.openFolder",
+        "title": "Open Project Folder…",
+        "category": "kgai",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "kgai.searchElements",
+        "title": "Search Elements",
+        "category": "kgai",
+        "icon": "$(search)"
+      },
+      {
+        "command": "kgai.peopleBy",
+        "title": "Count People By…",
+        "category": "kgai",
+        "icon": "$(account)"
+      },
+      {
+        "command": "kgai.help",
+        "title": "Help",
+        "category": "kgai",
+        "icon": "$(question)"
+      },
+      {
+        "command": "kgai.showDecision",
+        "title": "Show Decision",
+        "category": "kgai"
+      },
+      {
+        "command": "kgai.showElement",
+        "title": "Show Element",
+        "category": "kgai"
+      },
+      {
+        "command": "kgai.showPerson",
+        "title": "Show Person",
+        "category": "kgai"
+      },
+      {
+        "command": "kgai.showConflict",
+        "title": "Show Conflict",
+        "category": "kgai"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "kgai.search",
+          "when": "view == kgai.decisions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kgai.filter",
+          "when": "view == kgai.decisions",
+          "group": "navigation@2"
+        },
+        {
+          "command": "kgai.clearFilters",
+          "when": "view == kgai.decisions && kgai.filtered",
+          "group": "navigation@3"
+        },
+        {
+          "command": "kgai.overview",
+          "when": "view == kgai.decisions",
+          "group": "navigation@4"
+        },
+        {
+          "command": "kgai.refresh",
+          "when": "view == kgai.decisions",
+          "group": "navigation@5"
+        },
+        {
+          "command": "kgai.searchElements",
+          "when": "view == kgai.elements",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kgai.peopleBy",
+          "when": "view == kgai.people",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kgai.openFolder",
+          "when": "view == kgai.decisions",
+          "group": "1_store@1"
+        },
+        {
+          "command": "kgai.help",
+          "when": "view =~ /^kgai\\./",
+          "group": "9_help@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "kgai.showDecision",
+          "when": "false"
+        },
+        {
+          "command": "kgai.showElement",
+          "when": "false"
+        },
+        {
+          "command": "kgai.showPerson",
+          "when": "false"
+        },
+        {
+          "command": "kgai.showConflict",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "kgai",
+      "properties": {
+        "kgai.readerPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `kgread` binary. Empty: the one shipped with the extension, then `kgread` on PATH."
+        },
+        "kgai.projectFolder": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "The folder the store is resolved from, exactly as `kg` would resolve it there (`KGAI_STORE`, the approved `.kgairc`, `~/.kgai/config.json`, `<project>/.kgai/store`). Empty: the first workspace folder."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && npm run build && node --test test/reader.test.mjs",
+    "test:vscode": "npm run build && node test/vscode/runTest.mjs",
+    "package": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\" && vsce package"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.3.0",
+    "esbuild": "^0.25.0",
+    "mocha": "^11.1.0",
+    "typescript": "^5.7.0"
+  }
+}

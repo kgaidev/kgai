@@ -4,6 +4,41 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Added
+- **A VS Code extension — the project's decisions in the editor's sidebar**
+  (`editors/vscode`; it installs into VS Code and the editors built on it, Cursor and
+  Windsurf among them). Decisions newest first with type-ahead search and exact filters
+  (state, recorded by, credited to, element kind, element name, install, dates, regular
+  expressions), elements grouped by kind with their properties, links and the same
+  history `kg history` gives, contested elements with the competing decisions side by
+  side, people — how much of their work still stands, whom they replaced, activity by
+  month — and an overview with charts; a detail panel with Back for every jump, a status
+  bar item, and a Help page defining every word (head / superseded / note, recorded by,
+  credited to, install, sequence). It finds the store exactly as `kg` does, reports a
+  pending `.kgairc` without approving it, and follows the log as `kg`, a sync or a rebuild
+  change it. Read-only by construction and self-contained: it ships **`kgread`**, a small
+  pure-Go reader (`src/cmd/kgread`) that replays the log in memory and answers over
+  stdio — it never opens `graph.kuzu`, never takes the lock, never syncs, and builds for
+  every platform an editor runs on, Windows included, so nothing else is installed.
+  Not published to a marketplace yet: the `vscode extension` workflow packages one
+  VSIX per platform as a build artifact.
+- **`internal/view` — the store as a read model.** Every list, detail and tally a
+  viewer shows, as plain data in the reader's words, so any front end renders the same
+  answers; `internal/replay` — the log's projection with no database behind it — now
+  also carries the reads (heads, conflicts, history, statistics, people).
+
+### Changed
+- **The bulk rebuild's in-memory projection is now `internal/replay`,** shared with the
+  readers — one implementation of the projection semantics (MERGE / ON CREATE, authority
+  per Targets, the sorted props blob, canonical order) instead of two. `internal/engine`
+  tests it against a real Kuzu projection.
+- **Store resolution can be anchored at a directory** (`ResolveRootIn`, `LoadLayersIn`),
+  and the advisory lock moved behind build tags (flock on Unix, `LockFileEx` on Windows),
+  so `internal/store` compiles on Windows for the reader. `kg` itself is still
+  Linux/macOS: it needs the Kuzu library.
+
 ## [1.5.2] - 2026-08-16
 
 ### Security

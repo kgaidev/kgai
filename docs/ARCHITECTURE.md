@@ -141,6 +141,10 @@ store-wide `flock` so concurrent sessions never corrupt the single-writer cache.
 | `src/internal/graph` | Kuzu schema, idempotent MERGE projection, stub nodes, queries |
 | `src/internal/engine` | resolution, ingest, rebuild, context scoring, history/as-of/conflicts/search/doctor/export |
 | `src/main.go` | `kg` CLI (JSON I/O) |
+| `src/internal/replay` | the log's in-memory projection with no database behind it — the same MERGE / ON CREATE semantics as `internal/graph`, plus the reads over it (heads, conflicts, history, statistics, people); used by `BulkLoad` and by the readers, and tested against the Kuzu projection in `internal/engine` |
+| `src/internal/view` | the store as a read model: resolved as `kg` resolves it, replayed through `internal/replay`, every list / detail / tally as plain data in the reader's words |
+| `src/cmd/kgread` | the reader editor extensions talk to: `internal/view` over stdio, one JSON object per line, a `changed` notification when the log moves; pure Go, cross-compiles for every platform an editor runs on |
+| `editors/vscode` | the VS Code extension (also Cursor, Windsurf): four sidebar trees, a detail panel, the bundled `kgread` — [editors/vscode/README.md](../editors/vscode/README.md) |
 | `scripts/` | `fetch-libs.sh` (native lib), `install.sh` (idempotent engine install) |
 | `tests/` | installer test suites (`run.sh`: the install itself, PATH wiring, shell-profile safety, repo hygiene) — no network, sandbox `$HOME`; CI runs them on Linux, macOS, and bash 3.2 |
 | `bin/kg` | PATH shim for Claude Code's Bash tool → stable `~/.kgai` engine |
