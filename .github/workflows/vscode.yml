@@ -1,0 +1,141 @@
+name: vscode extension
+
+# The editor extension: kgread (pure Go, cross-compiled for every platform VS Code
+# runs on) plus the TypeScript extension, packaged as one VSIX per platform with the
+# reader inside. Every push builds and tests; a `vscode-v*` tag also publishes — to the
+# VS Code Marketplace and Open VSX — when the tokens are configured (VSCE_PAT, OVSX_PAT);
+# without them the packages stay workflow artifacts.
+
+on:
+  push:
+    branches: ['**']
+    tags: ['vscode-v*']
+    paths:
+      - 'editors/vscode/**'
+      - 'src/cmd/kgread/**'
+      - 'src/internal/view/**'
+      - 'src/internal/replay/**'
+      - 'src/internal/store/**'
+      - 'src/internal/event/**'
+      - 'src/go.mod'
+      - 'src/go.sum'
+      - '.github/workflows/vscode.yml'
+  pull_request:
+    paths:
+      - 'editors/vscode/**'
+      - 'src/cmd/kgread/**'
+      - 'src/internal/view/**'
+      - '.github/workflows/vscode.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: 'src/go.mod'
+          cache-dependency-path: src/go.sum
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Reader tests
+        working-directory: src
+        run: go test ./internal/view/... ./cmd/kgread
+
+      - name: Read version
+        id: ver
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./editors/vscode/package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # One reader per VS Code target platform. Pure Go, no cgo: one runner builds all.
+      - name: Build kgread for every platform
+        working-directory: src
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -e
+          build() { # <vscode target> <GOOS> <GOARCH> [GOARM]
+            local target="$1" goos="$2" goarch="$3" goarm="${4-}" ext=""
+            [ "$goos" = windows ] && ext=".exe"
+            mkdir -p "../editors/vscode/readers/$target"
+            GOOS="$goos" GOARCH="$goarch" GOARM="$goarm" go build -trimpath -ldflags="-s -w -X main.version=$VERSION" \
+              -o "../editors/vscode/readers/$target/kgread$ext" ./cmd/kgread
+          }
+          build linux-x64     linux   amd64
+          build linux-arm64   linux   arm64
+          build linux-armhf   linux   arm   7
+          build alpine-x64    linux   amd64
+          build alpine-arm64  linux   arm64
+          build darwin-x64    darwin  amd64
+          build darwin-arm64  darwin  arm64
+          build win32-x64     windows amd64
+          build win32-arm64   windows arm64
+          ls -la ../editors/vscode/readers/*/
+
+      - name: Install
+        working-directory: editors/vscode
+        run: npm ci
+
+      - name: Build and test (node)
+        working-directory: editors/vscode
+        env:
+          KGREAD: ${{ github.workspace }}/editors/vscode/readers/linux-x64/kgread
+        run: npm test
+
+      - name: Test inside VS Code
+        working-directory: editors/vscode
+        env:
+          KGREAD: ${{ github.workspace }}/editors/vscode/readers/linux-x64/kgread
+        run: xvfb-run -a npm run test:vscode
+
+      - name: Package one VSIX per platform
+        working-directory: editors/vscode
+        shell: bash
+        run: |
+          set -e
+          cp ../../LICENSE LICENSE
+          mkdir -p packages
+          for dir in readers/*/; do
+            target="$(basename "$dir")"
+            rm -rf bin && mkdir bin
+            cp "$dir"/kgread* bin/
+            npx vsce package --target "$target" -o "packages/kgai-${{ steps.ver.outputs.version }}-$target.vsix"
+          done
+          ls -la packages
+
+      - name: Upload packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: kgai-vscode-${{ steps.ver.outputs.version }}
+          path: editors/vscode/packages/*.vsix
+
+      - name: Publish (tag + tokens only)
+        if: startsWith(github.ref, 'refs/tags/vscode-v')
+        working-directory: editors/vscode
+        shell: bash
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ] && [ -z "$OVSX_PAT" ]; then
+            echo "No VSCE_PAT / OVSX_PAT configured — packages are artifacts of this run only."; exit 0
+          fi
+          for f in packages/*.vsix; do
+            [ -n "$VSCE_PAT" ] && npx vsce publish --packagePath "$f"
+            [ -n "$OVSX_PAT" ] && npx ovsx publish "$f" -p "$OVSX_PAT"
+          done
