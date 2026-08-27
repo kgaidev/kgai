@@ -14,12 +14,12 @@ package graph
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	kuzu "github.com/kuzudb/go-kuzu"
 	"kgai/internal/event"
+	"kgai/internal/replay"
 )
 
 // Graph wraps an open database + connection.
@@ -307,17 +307,9 @@ func (g *Graph) ensureDecision(id string) {
 	}
 }
 
-func parseTime(s string) time.Time {
-	if s == "" {
-		return time.Time{}
-	}
-	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02"} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC()
-		}
-	}
-	return time.Time{}
-}
+// parseTime reads an event timestamp; one implementation, shared with the bulk path
+// and kgview through internal/replay so every projection stores the same instant.
+func parseTime(s string) time.Time { return replay.ParseTime(s) }
 
 // elementProps returns the raw props blob of an element ("" if none/absent).
 func (g *Graph) elementProps(id string) (string, error) {
@@ -331,35 +323,6 @@ func (g *Graph) elementProps(id string) (string, error) {
 	return "", nil
 }
 
-// setProp updates one key in a newline-delimited "key=value" props blob, preserving
-// the other keys. The live graph is tiny, so a flat text blob is enough.
-func setProp(blob, key, value string) string {
-	key = strings.TrimSpace(key)
-	// The blob is newline-delimited "key=value"; neutralize separators in inputs so a
-	// value can never forge another key (the key never legitimately contains '=').
-	key = strings.NewReplacer("\n", " ", "\r", " ", "=", "-").Replace(key)
-	value = strings.NewReplacer("\n", " ", "\r", " ").Replace(value)
-	var out []string
-	replaced := false
-	for _, line := range strings.Split(blob, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if k := strings.SplitN(line, "=", 2)[0]; k == key {
-			out = append(out, key+"="+value)
-			replaced = true
-		} else {
-			out = append(out, line)
-		}
-	}
-	if !replaced {
-		out = append(out, key+"="+value)
-	}
-	// Keep lines sorted by key so the blob is independent of apply order — this keeps
-	// the projection deterministic across machines (incremental vs full replay).
-	sort.Slice(out, func(i, j int) bool {
-		return strings.SplitN(out[i], "=", 2)[0] < strings.SplitN(out[j], "=", 2)[0]
-	})
-	return strings.Join(out, "\n")
-}
+// setProp updates one key in the props blob (see replay.SetProp — shared so the
+// statement path, the bulk path and kgview never disagree on the blob).
+func setProp(blob, key, value string) string { return replay.SetProp(blob, key, value) }
