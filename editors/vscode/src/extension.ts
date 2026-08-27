@@ -7,7 +7,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { DetailPanel, type DetailHost, type Page } from "./detail";
 import { Reader, readerPath, type DecisionFilter, type Decisions, type PeopleBy, type State, type Store } from "./reader";
-import { ConflictsProvider, DecisionsProvider, ElementsProvider, PeopleProvider, type Host } from "./trees";
+import { ConflictItem, ConflictsProvider, DecisionsProvider, ElementsProvider, GroupItem, PeopleProvider, type Host } from "./trees";
 
 export async function activate(context: vscode.ExtensionContext): Promise<App> {
   const app = new App(context);
@@ -23,6 +23,8 @@ export class App implements vscode.Disposable, Host, DetailHost {
   peopleBy: PeopleBy = "actor";
   elementsText = "";
   elementsKind = "";
+  readonly collapsedKinds = new Set<string>();
+  readonly collapsedConflicts = new Set<string>();
 
   readonly decisionsProvider = new DecisionsProvider(this);
   readonly elementsProvider = new ElementsProvider(this);
@@ -49,6 +51,11 @@ export class App implements vscode.Disposable, Host, DetailHost {
     this.elementsView = vscode.window.createTreeView("kgai.elements", { treeDataProvider: this.elementsProvider, showCollapseAll: true });
     this.conflictsView = vscode.window.createTreeView("kgai.conflicts", { treeDataProvider: this.conflictsProvider });
     this.peopleView = vscode.window.createTreeView("kgai.people", { treeDataProvider: this.peopleProvider });
+    // What the reader folds by hand stays folded through every refresh of the tree.
+    this.elementsView.onDidCollapseElement((e) => e.element instanceof GroupItem && this.collapsedKinds.add(e.element.group.kind));
+    this.elementsView.onDidExpandElement((e) => e.element instanceof GroupItem && this.collapsedKinds.delete(e.element.group.kind));
+    this.conflictsView.onDidCollapseElement((e) => e.element instanceof ConflictItem && this.collapsedConflicts.add(e.element.conflict.elementId));
+    this.conflictsView.onDidExpandElement((e) => e.element instanceof ConflictItem && this.collapsedConflicts.delete(e.element.conflict.elementId));
     this.statusBar.name = "kgai";
     this.statusBar.command = "kgai.overview";
     this.disposables.push(this.output, this.statusBar, this.decisionsView, this.elementsView, this.conflictsView, this.peopleView, this.detail);
@@ -181,6 +188,7 @@ export class App implements vscode.Disposable, Host, DetailHost {
   }
 
   elementsLoaded(shown: number, total: number): void {
+    void vscode.commands.executeCommand("setContext", "kgai.elementsFiltered", this.elementsKind !== "" || this.elementsText !== "");
     const parts: string[] = [];
     if (this.elementsKind) {
       parts.push(`kind: ${this.elementsKind}`);
@@ -236,6 +244,7 @@ export class App implements vscode.Disposable, Host, DetailHost {
     cmd("kgai.filter", () => this.pickFilter());
     cmd("kgai.clearFilters", () => this.setFilter({}));
     cmd("kgai.searchElements", () => this.searchElements());
+    cmd("kgai.clearElementSearch", () => this.setElementSearch("", ""));
     cmd("kgai.peopleBy", () => this.pickPeopleBy());
     cmd("kgai.openFolder", () => this.openFolder());
   }
@@ -388,24 +397,84 @@ export class App implements vscode.Disposable, Host, DetailHost {
     this.setFilter(next);
   }
 
+  setElementSearch(kind: string, text: string): void {
+    this.elementsKind = kind;
+    this.elementsText = text.trim();
+    this.elementsProvider.refresh();
+  }
+
+  /** Type-ahead over element names; picking one opens it, or keep the text as the filter. */
   private async searchElements(): Promise<void> {
     const rd = this.rd;
     if (!rd || !this.hasStore()) {
       return;
     }
+    type Item = vscode.QuickPickItem & { id?: string; apply?: boolean; clear?: boolean; pickKind?: boolean };
+    const qp = vscode.window.createQuickPick<Item>();
+    qp.placeholder = this.elementsKind ? `Search ${this.elementsKind} elements by name` : "Search elements by name (exact substring)";
+    qp.value = this.elementsText;
+    qp.matchOnDescription = true;
+    let seq = 0;
+    const load = async (text: string) => {
+      const mine = ++seq;
+      qp.busy = true;
+      try {
+        const res = await rd.elements(this.elementsKind, text);
+        if (mine !== seq) {
+          return;
+        }
+        const items: Item[] = [];
+        if (text || this.elementsKind) {
+          items.push({ label: `$(filter) Keep "${text}"${this.elementsKind ? ` in ${this.elementsKind}` : ""} as the filter`, description: `${res.shown} of ${res.total}`, apply: true, alwaysShow: true });
+        }
+        items.push({ label: "$(symbol-class) Only one kind…", description: this.elementsKind ? `now: ${this.elementsKind}` : "", pickKind: true, alwaysShow: true });
+        if (this.elementsKind || this.elementsText) {
+          items.push({ label: "$(clear-all) Show all elements", clear: true, alwaysShow: true });
+        }
+        for (const g of res.groups) {
+          for (const e of g.elements.slice(0, 200)) {
+            items.push({ label: e.name, description: `${g.kind} · ${e.decisions}${e.conflict ? " · conflict" : ""}`, id: e.id, alwaysShow: true });
+          }
+        }
+        qp.items = items;
+        qp.title = `${res.shown} of ${res.total} elements`;
+      } finally {
+        if (mine === seq) {
+          qp.busy = false;
+        }
+      }
+    };
+    qp.onDidChangeValue((v) => void load(v));
+    qp.onDidAccept(() => {
+      const pick = qp.selectedItems[0];
+      const text = qp.value;
+      qp.hide();
+      if (pick?.clear) {
+        this.setElementSearch("", "");
+      } else if (pick?.apply) {
+        this.setElementSearch(this.elementsKind, text);
+      } else if (pick?.pickKind) {
+        void this.pickElementKind(text);
+      } else if (pick?.id) {
+        void this.detail.show({ kind: "element", id: pick.id });
+      }
+    });
+    qp.onDidHide(() => qp.dispose());
+    qp.show();
+    void load(qp.value);
+  }
+
+  private async pickElementKind(text: string): Promise<void> {
+    const rd = this.rd;
+    if (!rd) {
+      return;
+    }
     const filters = await rd.filters();
     const kinds: (vscode.QuickPickItem & { value: string })[] = [{ label: "$(circle-slash) all kinds", value: "" }, ...filters.kinds.map((k) => ({ label: k.key, description: String(k.n), value: k.key }))];
-    const kind = await vscode.window.showQuickPick(kinds, { placeHolder: "Kind of element" });
-    if (!kind) {
-      return;
+    const kind = await vscode.window.showQuickPick(kinds, { placeHolder: "Show only elements of this kind" });
+    if (kind) {
+      this.setElementSearch(kind.value, text);
     }
-    const text = await vscode.window.showInputBox({ prompt: "Element name contains (empty: any)", value: this.elementsText });
-    if (text === undefined) {
-      return;
-    }
-    this.elementsKind = kind.value;
-    this.elementsText = text.trim();
-    this.elementsProvider.refresh();
   }
 
   private async pickPeopleBy(): Promise<void> {

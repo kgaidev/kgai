@@ -13,6 +13,9 @@ export interface Host {
   peopleBy: PeopleBy;
   elementsText: string;
   elementsKind: string;
+  /** Groups the reader collapsed by hand — kept across every refresh of the tree. */
+  collapsedKinds: Set<string>;
+  collapsedConflicts: Set<string>;
   decisionsLoaded(result: Decisions): void;
   elementsLoaded(shown: number, total: number): void;
   log(line: string): void;
@@ -86,8 +89,11 @@ export class DecisionsProvider extends Provider<DecisionItem> {
 }
 
 export class GroupItem extends vscode.TreeItem {
-  constructor(public readonly group: ElementGroup) {
-    super(group.kind, vscode.TreeItemCollapsibleState.Expanded);
+  constructor(
+    public readonly group: ElementGroup,
+    collapsed = false,
+  ) {
+    super(group.kind, collapsed ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded);
     this.id = "k:" + group.kind;
     this.description = String(group.count);
     this.iconPath = new vscode.ThemeIcon("symbol-class");
@@ -119,13 +125,16 @@ export class ElementsProvider extends Provider<GroupItem | ElementItem> {
     }
     const result = await this.ask((rd) => rd.elements(this.host.elementsKind, this.host.elementsText), { groups: [], shown: 0, total: 0 });
     this.host.elementsLoaded(result.shown, result.total);
-    return result.groups.map((g) => new GroupItem(g));
+    return result.groups.map((g) => new GroupItem(g, this.host.collapsedKinds.has(g.kind)));
   }
 }
 
 export class ConflictItem extends vscode.TreeItem {
-  constructor(public readonly conflict: Conflict) {
-    super(conflict.name, vscode.TreeItemCollapsibleState.Expanded);
+  constructor(
+    public readonly conflict: Conflict,
+    collapsed = false,
+  ) {
+    super(conflict.name, collapsed ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded);
     this.id = "c:" + conflict.elementId;
     this.description = `${conflict.kind} · ${conflict.heads.length} heads`;
     this.iconPath = new vscode.ThemeIcon("warning", new vscode.ThemeColor("charts.red"));
@@ -142,13 +151,18 @@ function headRow(h: ConflictHead): Row {
 export class ConflictsProvider extends Provider<ConflictItem | DecisionItem> {
   async getChildren(item?: ConflictItem | DecisionItem): Promise<(ConflictItem | DecisionItem)[]> {
     if (item instanceof ConflictItem) {
-      return item.conflict.heads.map((h) => new DecisionItem(headRow(h)));
+      // One decision can be a head on two contested elements; ids must stay unique.
+      return item.conflict.heads.map((h) => {
+        const d = new DecisionItem(headRow(h));
+        d.id = `c:${item.conflict.elementId}:${h.id}`;
+        return d;
+      });
     }
     if (item) {
       return [];
     }
     const conflicts = await this.ask((rd) => rd.conflicts(), [] as Conflict[]);
-    return conflicts.map((c) => new ConflictItem(c));
+    return conflicts.map((c) => new ConflictItem(c, this.host.collapsedConflicts.has(c.elementId)));
   }
 }
 

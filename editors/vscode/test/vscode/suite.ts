@@ -62,6 +62,30 @@ export function run(): Promise<void> {
       );
     });
 
+    test("keeps a kind folded through a refresh, and clears the element search", async () => {
+      app.collapsedKinds.add("feature");
+      app.elementsProvider.refresh();
+      const groups = (await app.elementsProvider.getChildren()) as GroupItem[];
+      assert.equal(groups[0].collapsibleState, vscode.TreeItemCollapsibleState.Collapsed);
+      app.collapsedKinds.delete("feature");
+      assert.equal(((await app.elementsProvider.getChildren()) as GroupItem[])[0].collapsibleState, vscode.TreeItemCollapsibleState.Expanded);
+
+      app.setElementSearch("", "pric");
+      const narrowed = (await app.elementsProvider.getChildren()) as GroupItem[];
+      assert.equal(narrowed[0].group.count, 1);
+      await vscode.commands.executeCommand("kgai.clearElementSearch");
+      assert.equal(app.elementsText, "");
+      assert.equal(((await app.elementsProvider.getChildren()) as GroupItem[])[0].group.count, 2);
+    });
+
+    test("gives each conflict head its own id", async () => {
+      const conflicts = await app.conflictsProvider.getChildren();
+      const heads = (await app.conflictsProvider.getChildren(conflicts[0])) as DecisionItem[];
+      assert.equal(heads.length, 2);
+      assert.ok(heads[0].id?.startsWith("c:"));
+      assert.notEqual(heads[0].id, heads[1].id);
+    });
+
     test("opens details in the panel and goes back", async () => {
       const rows = (await app.decisionsProvider.getChildren()) as DecisionItem[];
       await vscode.commands.executeCommand("kgai.showDecision", rows[0].row.id);

@@ -124,6 +124,12 @@
         "icon": "$(search)"
       },
       {
+        "command": "kgai.clearElementSearch",
+        "title": "Show All Elements",
+        "category": "kgai",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "kgai.peopleBy",
         "title": "Count People By…",
         "category": "kgai",
@@ -187,6 +193,11 @@
           "command": "kgai.searchElements",
           "when": "view == kgai.elements",
           "group": "navigation@1"
+        },
+        {
+          "command": "kgai.clearElementSearch",
+          "when": "view == kgai.elements && kgai.elementsFiltered",
+          "group": "navigation@2"
         },
         {
           "command": "kgai.peopleBy",
