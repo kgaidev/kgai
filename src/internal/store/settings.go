@@ -172,13 +172,15 @@ func (st *Settings) Set(key, val string) error {
 // Errors are returned, never swallowed. Falling back to the per-project default on a
 // corrupt or unapproved .kgairc would put decisions in a store nobody reads — and
 // .kgairc is a committed file, so a conflicted merge is an ordinary way to get here.
-func StoreRootFromLayers() (string, string, error) {
-	project, projectTrusted, err := loadProjectLayer()
+func StoreRootFromLayers() (string, string, error) { return storeRootFromLayersIn("") }
+
+func storeRootFromLayersIn(dir string) (string, string, error) {
+	project, projectTrusted, err := loadProjectLayerIn(dir)
 	if err != nil {
 		return "", "", err
 	}
 	if project.StoreRoot != "" && projectTrusted {
-		root, err := ExpandStorePath(project.StoreRoot)
+		root, err := expandStorePathIn(project.StoreRoot, dir)
 		return root, LayerProject, err
 	}
 	var global Settings
@@ -196,10 +198,12 @@ func StoreRootFromLayers() (string, string, error) {
 // loadProjectLayer reads <repo>/.kgairc, drops any key that may not live there, and
 // reports whether the file has been approved (see trust.go). An unapproved file parses
 // but decides NOTHING: it arrives with a clone, from whoever wrote that repository.
-func loadProjectLayer() (Settings, bool, error) {
+func loadProjectLayer() (Settings, bool, error) { return loadProjectLayerIn("") }
+
+func loadProjectLayerIn(dir string) (Settings, bool, error) {
 	var st Settings
 	var exists bool
-	path := ProjectConfigPath()
+	path := projectConfigPathIn(dir)
 	if err := readSettings(path, &st, &exists); err != nil {
 		return Settings{}, false, err
 	}
@@ -229,7 +233,9 @@ func loadProjectLayer() (Settings, bool, error) {
 // init overwrote the project's own .gitignore and scattered the log through the working
 // tree; ~ turned the home directory into a git repo; ../other-repo wrote into a
 // neighbouring project.
-func ExpandStorePath(p string) (string, error) {
+func ExpandStorePath(p string) (string, error) { return expandStorePathIn(p, "") }
+
+func expandStorePathIn(p, dir string) (string, error) {
 	raw := p
 	if p == "" {
 		return "", fmt.Errorf("`store` is set to an empty value")
@@ -258,7 +264,7 @@ func ExpandStorePath(p string) (string, error) {
 	// the same committed value must resolve to the same store from anywhere in the repo
 	// ("../shared-kg" for sibling repositories is the case worth supporting).
 	if !filepath.IsAbs(p) {
-		p = filepath.Join(ProjectRoot(), p)
+		p = filepath.Join(projectRootIn(dir), p)
 	}
 	p = filepath.Clean(p)
 
@@ -266,7 +272,7 @@ func ExpandStorePath(p string) (string, error) {
 	// one directory and the writes at another. A path that does not exist yet is fine
 	// — that is the normal first run — so resolve the deepest existing ancestor.
 	resolved := resolveExisting(p)
-	proj := ProjectRoot()
+	proj := projectRootIn(dir)
 	if home, err := os.UserHomeDir(); err == nil && resolved == filepath.Clean(home) {
 		return "", fmt.Errorf("`store` resolves to your home directory (%s) — the store owns the directory it lives in (it git-inits it and writes .gitignore), so it needs one of its own", resolved)
 	}
@@ -360,18 +366,22 @@ type Layer struct {
 // the session layer is then simply absent. A corrupt file is an error: silently
 // treating it as empty would push a project's decisions to the wrong remote, or drop
 // the team's capture rules, with no sign that anything was wrong.
-func LoadLayers(s *Store) ([]Layer, error) {
+func LoadLayers(s *Store) ([]Layer, error) { return LoadLayersIn(s, "") }
+
+// LoadLayersIn is LoadLayers with the project layer anchored at dir ("" = the working
+// directory), for a caller opened on a folder rather than running in it.
+func LoadLayersIn(s *Store, dir string) ([]Layer, error) {
 	session := Layer{Name: LayerSession}
 	if s != nil {
 		session.Path, session.Exists, session.Settings = s.configPath(), true, s.Config.Settings
-	} else if root, err := ResolveRoot(); err == nil {
+	} else if root, _, err := ResolveRootIn(dir); err == nil {
 		session.Path = filepath.Join(root, "kg.config.json")
 	}
 	// When the store cannot be resolved at all, the session layer has no path to report.
 	// DefaultRoot() would answer with the per-project default — a file that is not where
 	// the session config lives — inside the command whose job is to diagnose that.
 
-	project := Layer{Name: LayerProject, Path: ProjectConfigPath()}
+	project := Layer{Name: LayerProject, Path: projectConfigPathIn(dir)}
 	var onFile Settings
 	if err := readSettings(project.Path, &onFile, &project.Exists); err != nil {
 		return nil, err
@@ -552,8 +562,10 @@ func WriteLayer(name, path, key, val string) error {
 //
 // So a change to .kgairc takes effect once it is merged and checked out in the main
 // worktree, exactly as the store itself ignores branches.
-func ProjectConfigPath() string {
-	return filepath.Join(ProjectRoot(), ProjectConfigName)
+func ProjectConfigPath() string { return projectConfigPathIn("") }
+
+func projectConfigPathIn(dir string) string {
+	return filepath.Join(projectRootIn(dir), ProjectConfigName)
 }
 
 // projectStart is where the search begins: the session's working directory, or

@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -73,19 +72,31 @@ const SchemaVersion = 1
 // of a project shares one graph. A worktree is a branch with a directory, and the KG is
 // deliberately branch-agnostic: a decision recorded while working in a worktree describes
 // the same project, and must not be stranded in a separate empty store.
-func ProjectRoot() string {
+func ProjectRoot() string { return projectRootIn("") }
+
+// projectRootIn is ProjectRoot as seen from dir instead of the working directory —
+// the same rules, anchored elsewhere, for a caller that is not running inside the
+// project (kgview opened on a folder). "" means the working directory. KGAI_PROJECT
+// still wins, as it does for kg.
+func projectRootIn(dir string) string {
 	if v := os.Getenv("KGAI_PROJECT"); v != "" {
 		return v
 	}
 	// One rev-parse, three answers (git prints them in argument order).
-	top, gitDir, commonDir := revParse3("--show-toplevel", "--absolute-git-dir", "--git-common-dir")
+	top, gitDir, commonDir := revParse3In(dir, "--show-toplevel", "--absolute-git-dir", "--git-common-dir")
 	if top == "" {
+		if dir != "" {
+			if abs, err := filepath.Abs(dir); err == nil {
+				return abs
+			}
+			return dir
+		}
 		if wd, err := os.Getwd(); err == nil {
 			return wd
 		}
 		return "."
 	}
-	if main := mainWorktreeRoot(gitDir, commonDir); main != "" {
+	if main := mainWorktreeRoot(dir, gitDir, commonDir); main != "" {
 		return main
 	}
 	return top
@@ -94,11 +105,14 @@ func ProjectRoot() string {
 // mainWorktreeRoot returns the main worktree's root when gitDir/commonDir describe a
 // LINKED worktree, else "". A linked worktree has a private git dir (<main>/.git/
 // worktrees/<name>) while the common dir still points at the main repo's .git.
-func mainWorktreeRoot(gitDir, commonDir string) string {
+func mainWorktreeRoot(dir, gitDir, commonDir string) string {
 	if gitDir == "" || commonDir == "" {
 		return ""
 	}
-	// --git-common-dir is relative to the working directory; --absolute-git-dir is not.
+	// --git-common-dir is relative to the directory git ran in; --absolute-git-dir is not.
+	if !filepath.IsAbs(commonDir) && dir != "" {
+		commonDir = filepath.Join(dir, commonDir)
+	}
 	if abs, err := filepath.Abs(commonDir); err == nil {
 		commonDir = abs
 	}
@@ -118,10 +132,13 @@ func mainWorktreeRoot(gitDir, commonDir string) string {
 	return root
 }
 
-// revParse3 runs one `git rev-parse` with three flags and returns the three output lines.
-// Any line git does not produce (not a repo, old git) comes back as "".
-func revParse3(a, b, c string) (string, string, string) {
-	out, err := exec.Command("git", "rev-parse", a, b, c).Output()
+// revParse3In runs one `git rev-parse` with three flags in dir ("" = the working
+// directory) and returns the three output lines. Any line git does not produce (not a
+// repo, old git) comes back as "".
+func revParse3In(dir, a, b, c string) (string, string, string) {
+	cmd := exec.Command("git", "rev-parse", a, b, c)
+	cmd.Dir = dir
+	out, err := cmd.Output()
 	if err != nil {
 		return "", "", ""
 	}
@@ -146,7 +163,7 @@ func DefaultRoot() string {
 	// The `store` setting from the repo's .kgairc or this machine's config.json —
 	// how several repositories share one graph without every developer exporting
 	// KGAI_STORE by hand. The environment still wins, so a one-off override works.
-	if v, _, err := StoreRootFromLayers(); err == nil && v != "" {
+	if v, _, err := storeRootFromLayersIn(""); err == nil && v != "" {
 		return v
 	}
 	return filepath.Join(ProjectRoot(), ".kgai", "store")
@@ -165,18 +182,25 @@ func ResolveRoot() (string, error) {
 // name, or "" for the per-project default. Callers use it to tell "nothing recorded
 // here yet" (the default, an ordinary state) apart from "the store this repo is
 // configured to use is not there" (which reads as the same empty answer and is not).
-func ResolveRootWithSource() (string, string, error) {
+func ResolveRootWithSource() (string, string, error) { return ResolveRootIn("") }
+
+// ResolveRootIn is ResolveRootWithSource as if dir were the working directory: the
+// same precedence (KGAI_STORE, the approved project layer, the machine layer, the
+// per-project default) and the same refusals, anchored at dir. "" means the working
+// directory. kgview uses it so a store opened on a folder is the store kg would use
+// when run there.
+func ResolveRootIn(dir string) (string, string, error) {
 	if v := os.Getenv("KGAI_STORE"); v != "" {
 		return v, "KGAI_STORE", nil
 	}
-	v, source, err := StoreRootFromLayers()
+	v, source, err := storeRootFromLayersIn(dir)
 	if err != nil {
 		return "", "", err
 	}
 	if v != "" {
 		return v, source, nil
 	}
-	return filepath.Join(ProjectRoot(), ".kgai", "store"), "", nil
+	return filepath.Join(projectRootIn(dir), ".kgai", "store"), "", nil
 }
 
 // KgaiHome is the stable runtime/store home for kgai.
@@ -556,7 +580,7 @@ func (s *Store) Lock() error { return s.lock2(false) }
 // than queue behind an interactive write.
 func (s *Store) TryLock() (bool, error) {
 	err := s.lock2(true)
-	if err == syscall.EWOULDBLOCK {
+	if isWouldBlock(err) {
 		return false, nil
 	}
 	return err == nil, err
@@ -567,11 +591,7 @@ func (s *Store) lock2(try bool) error {
 	if err != nil {
 		return err
 	}
-	how := syscall.LOCK_EX
-	if try {
-		how |= syscall.LOCK_NB
-	}
-	if err := syscall.Flock(int(f.Fd()), how); err != nil {
+	if err := lockFile(f, try); err != nil {
 		f.Close()
 		return err
 	}
@@ -598,7 +618,7 @@ func (s *Store) lock2(try bool) error {
 // Unlock releases the write lock.
 func (s *Store) Unlock() {
 	if s.lock != nil {
-		_ = syscall.Flock(int(s.lock.Fd()), syscall.LOCK_UN)
+		_ = unlockFile(s.lock)
 		_ = s.lock.Close()
 		s.lock = nil
 	}

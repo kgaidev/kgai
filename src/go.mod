@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.30
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.2
 	github.com/google/uuid v1.6.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
@@ -28,6 +29,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.44.1 // indirect
 	github.com/aws/smithy-go v1.27.3 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
+	github.com/stretchr/testify v1.11.1 // indirect
 )
 
 // The native LadybugDB Go module (github.com/LadybugDB/go-ladybug) currently
