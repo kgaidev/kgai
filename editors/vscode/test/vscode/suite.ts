@@ -78,6 +78,16 @@ export function run(): Promise<void> {
       assert.equal(((await app.elementsProvider.getChildren()) as GroupItem[])[0].group.count, 2);
     });
 
+    test("collapses and expands every kind from the toolbar", async () => {
+      await app.elementsProvider.getChildren();
+      await vscode.commands.executeCommand("kgai.collapseElements");
+      assert.ok(app.collapsedKinds.has("feature"), "collapse all folded the kind");
+      assert.equal(((await app.elementsProvider.getChildren()) as GroupItem[])[0].collapsibleState, vscode.TreeItemCollapsibleState.Collapsed);
+      await vscode.commands.executeCommand("kgai.expandElements");
+      assert.equal(app.collapsedKinds.size, 0, "expand all opened every kind");
+      assert.equal(((await app.elementsProvider.getChildren()) as GroupItem[])[0].collapsibleState, vscode.TreeItemCollapsibleState.Expanded);
+    });
+
     test("gives each conflict head its own id", async () => {
       const conflicts = await app.conflictsProvider.getChildren();
       const heads = (await app.conflictsProvider.getChildren(conflicts[0])) as DecisionItem[];

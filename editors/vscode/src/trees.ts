@@ -116,6 +116,9 @@ export class ElementItem extends vscode.TreeItem {
 }
 
 export class ElementsProvider extends Provider<GroupItem | ElementItem> {
+  /** The kind groups as last handed to the view — what Expand All reveals. */
+  groups: GroupItem[] = [];
+
   async getChildren(item?: GroupItem | ElementItem): Promise<(GroupItem | ElementItem)[]> {
     if (item instanceof GroupItem) {
       return item.group.elements.map((e) => new ElementItem(e));
@@ -124,8 +127,18 @@ export class ElementsProvider extends Provider<GroupItem | ElementItem> {
       return [];
     }
     const result = await this.ask((rd) => rd.elements(this.host.elementsKind, this.host.elementsText), { groups: [], shown: 0, total: 0 });
+    this.groups = result.groups.map((g) => new GroupItem(g, this.host.collapsedKinds.has(g.kind)));
     this.host.elementsLoaded(result.shown, result.total);
-    return result.groups.map((g) => new GroupItem(g, this.host.collapsedKinds.has(g.kind)));
+    return this.groups;
+  }
+
+  // reveal() needs the parent of an element: its kind group.
+  getParent(item: GroupItem | ElementItem): GroupItem | undefined {
+    if (item instanceof ElementItem) {
+      const kind = item.row.kind || "(no kind)";
+      return this.groups.find((g) => g.group.kind === kind);
+    }
+    return undefined;
   }
 }
 

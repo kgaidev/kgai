@@ -48,12 +48,23 @@ export class App implements vscode.Disposable, Host, DetailHost {
   constructor(private readonly context: vscode.ExtensionContext) {
     this.ready = new Promise((resolve) => (this.markReady = resolve));
     this.decisionsView = vscode.window.createTreeView("kgai.decisions", { treeDataProvider: this.decisionsProvider, showCollapseAll: false });
-    this.elementsView = vscode.window.createTreeView("kgai.elements", { treeDataProvider: this.elementsProvider, showCollapseAll: true });
+    // Collapse All / Expand All are the extension's own pair (VS Code only offers the first).
+    this.elementsView = vscode.window.createTreeView("kgai.elements", { treeDataProvider: this.elementsProvider, showCollapseAll: false });
     this.conflictsView = vscode.window.createTreeView("kgai.conflicts", { treeDataProvider: this.conflictsProvider });
     this.peopleView = vscode.window.createTreeView("kgai.people", { treeDataProvider: this.peopleProvider });
     // What the reader folds by hand stays folded through every refresh of the tree.
-    this.elementsView.onDidCollapseElement((e) => e.element instanceof GroupItem && this.collapsedKinds.add(e.element.group.kind));
-    this.elementsView.onDidExpandElement((e) => e.element instanceof GroupItem && this.collapsedKinds.delete(e.element.group.kind));
+    this.elementsView.onDidCollapseElement((e) => {
+      if (e.element instanceof GroupItem) {
+        this.collapsedKinds.add(e.element.group.kind);
+        this.updateFoldContext();
+      }
+    });
+    this.elementsView.onDidExpandElement((e) => {
+      if (e.element instanceof GroupItem) {
+        this.collapsedKinds.delete(e.element.group.kind);
+        this.updateFoldContext();
+      }
+    });
     this.conflictsView.onDidCollapseElement((e) => e.element instanceof ConflictItem && this.collapsedConflicts.add(e.element.conflict.elementId));
     this.conflictsView.onDidExpandElement((e) => e.element instanceof ConflictItem && this.collapsedConflicts.delete(e.element.conflict.elementId));
     this.statusBar.name = "kgai";
@@ -187,8 +198,45 @@ export class App implements vscode.Disposable, Host, DetailHost {
     this.decisionsView.badge = narrowed ? { value: result.shown, tooltip: `${result.shown} of ${result.total} decisions` } : undefined;
   }
 
+  /** Which of the fold buttons the Elements view shows: Collapse All while something is open, Expand All while something is folded. */
+  updateFoldContext(): void {
+    const kinds = this.elementsProvider.groups.map((g) => g.group.kind);
+    const folded = kinds.filter((k) => this.collapsedKinds.has(k)).length;
+    void vscode.commands.executeCommand("setContext", "kgai.elementsCollapsed", folded > 0);
+    void vscode.commands.executeCommand("setContext", "kgai.elementsExpanded", folded < kinds.length);
+  }
+
+  /** Folds every kind group. */
+  async collapseElements(): Promise<void> {
+    for (const g of this.elementsProvider.groups) {
+      this.collapsedKinds.add(g.group.kind);
+    }
+    const builtIn = "workbench.actions.treeView.kgai.elements.collapseAll";
+    if ((await vscode.commands.getCommands(true)).includes(builtIn)) {
+      await vscode.commands.executeCommand(builtIn);
+    }
+    this.elementsProvider.refresh();
+    this.updateFoldContext();
+  }
+
+  /** Opens every kind group. */
+  async expandElements(): Promise<void> {
+    this.collapsedKinds.clear();
+    // Last reveal wins the scroll position: open the kinds bottom-up so the tree ends at the top.
+    for (const g of [...this.elementsProvider.groups].reverse()) {
+      try {
+        await this.elementsView.reveal(g, { expand: true, select: false, focus: false });
+      } catch (e) {
+        this.log(`expand ${g.group.kind}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    this.elementsProvider.refresh();
+    this.updateFoldContext();
+  }
+
   elementsLoaded(shown: number, total: number): void {
     void vscode.commands.executeCommand("setContext", "kgai.elementsFiltered", this.elementsKind !== "" || this.elementsText !== "");
+    this.updateFoldContext();
     const parts: string[] = [];
     if (this.elementsKind) {
       parts.push(`kind: ${this.elementsKind}`);
@@ -245,6 +293,8 @@ export class App implements vscode.Disposable, Host, DetailHost {
     cmd("kgai.clearFilters", () => this.setFilter({}));
     cmd("kgai.searchElements", () => this.searchElements());
     cmd("kgai.clearElementSearch", () => this.setElementSearch("", ""));
+    cmd("kgai.collapseElements", () => this.collapseElements());
+    cmd("kgai.expandElements", () => this.expandElements());
     cmd("kgai.peopleBy", () => this.pickPeopleBy());
     cmd("kgai.openFolder", () => this.openFolder());
   }

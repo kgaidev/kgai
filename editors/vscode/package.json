@@ -130,6 +130,18 @@
         "icon": "$(clear-all)"
       },
       {
+        "command": "kgai.collapseElements",
+        "title": "Collapse All Kinds",
+        "category": "kgai",
+        "icon": "$(collapse-all)"
+      },
+      {
+        "command": "kgai.expandElements",
+        "title": "Expand All Kinds",
+        "category": "kgai",
+        "icon": "$(expand-all)"
+      },
+      {
         "command": "kgai.peopleBy",
         "title": "Count People By…",
         "category": "kgai",
@@ -198,6 +210,16 @@
           "command": "kgai.clearElementSearch",
           "when": "view == kgai.elements && kgai.elementsFiltered",
           "group": "navigation@2"
+        },
+        {
+          "command": "kgai.collapseElements",
+          "when": "view == kgai.elements && kgai.elementsExpanded",
+          "group": "navigation@3"
+        },
+        {
+          "command": "kgai.expandElements",
+          "when": "view == kgai.elements && kgai.elementsCollapsed",
+          "group": "navigation@4"
         },
         {
           "command": "kgai.peopleBy",
