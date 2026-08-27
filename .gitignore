@@ -20,3 +20,7 @@
 /.claude/
 # kgai per-project knowledge graph store (own git/sync cycle)
 .kgai/
+
+# Local build artifacts of the readers
+/src/kgread
+/src/kgview
