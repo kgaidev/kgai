@@ -97,6 +97,7 @@ const decisionsCount = document.getElementById("decisions-n")!;
 const countsBox = document.getElementById("counts")!;
 const projectBox = document.getElementById("project")!;
 const empty = document.getElementById("empty")!;
+const card = document.querySelector(".card") as HTMLElement;
 
 let data: Graph = { nodes: [], links: [], decisions: [], kinds: [] };
 let nodes: Node[] = [];
@@ -330,7 +331,9 @@ function render(): void {
   ctx.lineWidth = 3 * px;
   ctx.strokeStyle = colors.bg;
   ctx.fillStyle = colors.fg;
-  const threshold = nodes.length <= 80 ? 0 : 4 + 6 / t.k;
+  // The crowd that matters for labels is the elements; decision nodes carry none by default.
+  const elements = nodes.reduce((n, x) => n + (x.decision ? 0 : 1), 0);
+  const threshold = elements <= 80 ? 0 : 4 + 6 / t.k;
   const candidates: { n: Node; label: string; inFocus: boolean }[] = [];
   for (const n of nodes) {
     const inFocus = focus !== undefined && focus.has(n.id);
@@ -372,15 +375,19 @@ function fit(): void {
   // the positions, so a few far-flung nodes do not shrink the rest to dust.
   const xs = nodes.map((n) => n.x!).sort((a, b) => a - b);
   const ys = nodes.map((n) => n.y!).sort((a, b) => a - b);
-  const lo = Math.floor(nodes.length * 0.04);
-  const hi = Math.max(lo, Math.ceil(nodes.length * 0.96) - 1);
+  const trim = nodes.length > 80 ? 0.04 : 0; // a small graph fits whole
+  const lo = Math.floor(nodes.length * trim);
+  const hi = Math.max(lo, Math.ceil(nodes.length * (1 - trim)) - 1);
   const x0 = xs[lo];
   const x1 = xs[hi];
   const y0 = ys[lo];
   const y1 = ys[hi];
-  const pad = 70;
-  t.k = Math.min(2, (width - 2 * pad) / Math.max(1, x1 - x0), (height - 2 * pad) / Math.max(1, y1 - y0));
-  t.x = width / 2 - ((x0 + x1) / 2) * t.k;
+  // The card sits over the left edge: fit into the room to its right.
+  const left = Math.min(width * 0.5, card.getBoundingClientRect().right + 12);
+  const pad = 60;
+  const room = width - left;
+  t.k = Math.min(2, (room - 2 * pad) / Math.max(1, x1 - x0), (height - 2 * pad) / Math.max(1, y1 - y0));
+  t.x = left + room / 2 - ((x0 + x1) / 2) * t.k;
   t.y = height / 2 - ((y0 + y1) / 2) * t.k;
   render();
 }
