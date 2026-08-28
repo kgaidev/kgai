@@ -15,6 +15,11 @@
   "bugs": {
     "url": "https://github.com/kgaidev/kgai/issues"
   },
+  "qna": "https://github.com/kgaidev/kgai/issues",
+  "galleryBanner": {
+    "color": "#0f1117",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
