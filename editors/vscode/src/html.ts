@@ -331,7 +331,7 @@ export function document(body: string, title: string, nonce: string, cspSource: 
 <style nonce="${nonce}">${css}</style>
 </head>
 <body>
-<div class="toolbar"><button id="back" ${canGoBack ? "" : "disabled"} title="Back (Alt+Left)">← Back</button><span class="grow"></span><button id="help" title="What the words mean">Help</button></div>
+<div class="toolbar"><button id="back" ${canGoBack ? "" : "disabled"} title="Back (Alt+Left)">← Back</button><span class="grow"></span><button id="graph" title="The live graph: elements, links, the decisions as a layer">Graph</button><button id="help" title="What the words mean">Help</button></div>
 <main>${body}</main>
 <script nonce="${nonce}">${script}</script>
 </body>
@@ -413,6 +413,7 @@ document.addEventListener('click', e => {
   if (c) { vscode.postMessage({ type: 'copy', text: c.dataset.copy }); c.textContent = 'copied'; setTimeout(() => c.textContent = 'copy', 1200); return; }
   if (e.target.closest('#back')) { vscode.postMessage({ type: 'back' }); return; }
   if (e.target.closest('#help')) { vscode.postMessage({ type: 'help' }); return; }
+  if (e.target.closest('#graph')) { vscode.postMessage({ type: 'graph' }); return; }
 });
 document.addEventListener('keydown', e => { if (e.altKey && e.key === 'ArrowLeft') { vscode.postMessage({ type: 'back' }); } });
 `;

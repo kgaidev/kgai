@@ -23,6 +23,7 @@ test("the whole document keeps its CSP without unsafe-inline", () => {
   assert.match(doc, /style-src vscode-resource: 'nonce-abc'/);
   assert.ok(!/unsafe-inline/.test(doc));
   assert.ok(!/ style="/.test(doc), "no inline style anywhere in a rendered page");
+  assert.match(doc, /<button id="graph"/, "every page offers the graph");
 });
 
 

@@ -87,7 +87,12 @@ export class App implements vscode.Disposable, Host, DetailHost, GraphHost {
   // ---- lifecycle ------------------------------------------------------------------------
 
   log(line: string): void {
-    this.output.appendLine(line);
+    try {
+      this.output.appendLine(line);
+    } catch {
+      // The channel is gone while the extension host shuts down; the reader's exit
+      // is the last thing that wants to be logged then.
+    }
   }
 
   reader(): Reader | undefined {
@@ -255,6 +260,10 @@ export class App implements vscode.Disposable, Host, DetailHost, GraphHost {
 
   help(): void {
     void this.detail.show({ kind: "help" });
+  }
+
+  openGraph(): void {
+    this.graph.show();
   }
 
   open(kind: string, id: string): void {

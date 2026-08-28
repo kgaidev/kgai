@@ -21,6 +21,7 @@ export interface DetailHost {
   store(): Store | undefined;
   peopleBy: PeopleBy;
   open(kind: string, id: string): void;
+  openGraph(): void;
   log(line: string): void;
 }
 
@@ -87,6 +88,9 @@ export class DetailPanel implements vscode.Disposable {
           break;
         case "help":
           void this.show({ kind: "help" });
+          break;
+        case "graph":
+          this.host.openGraph();
           break;
         case "copy":
           if (msg.text) {

@@ -2,7 +2,7 @@
   "name": "kgai",
   "displayName": "kgai — the decisions of this project",
   "description": "Browse the kgai knowledge graph of the open project: decisions with exact filters, elements, contested elements and people. Read-only, no AI, one fixed order.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "kgaidev",
   "license": "MIT",
   "icon": "media/icon.png",
