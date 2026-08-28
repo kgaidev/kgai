@@ -1,6 +1,10 @@
-# Only what the extension needs at run time goes into the package.
+# Only what the extension needs at run time goes into the package. vsce lets a negated
+# pattern win over every ignore, so the entries are exact files, not dist/src/**: the
+# source maps, the test suite, and the copies of reader.js / html.js the node tests load
+# stay out (extension.js bundles its own).
 **
-!dist/src/**
+!dist/src/extension.js
+!dist/src/webview/graph.js
 !media/**
 !bin/**
 !README.md
