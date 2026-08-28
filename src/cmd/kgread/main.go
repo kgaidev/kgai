@@ -41,7 +41,7 @@ Protocol (one JSON object per line):
   response       {"id":1,"result":...}  or  {"id":1,"error":"..."}
   methods        status, open{dir}, refresh, overview, filters, decisions{filter},
                  decision{id}, elements{kind,text}, element{id}, conflicts,
-                 people{by}, person{name,by}
+                 graph, people{by}, person{name,by}
 `)
 	}
 	dir := flag.String("dir", "", "")

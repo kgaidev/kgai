@@ -171,6 +171,8 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return e, nil
 	case "conflicts":
 		return m.Conflicts(), nil
+	case "graph":
+		return m.Graph(), nil
 	case "people":
 		return m.PersonRows(p.By), nil
 	case "person":

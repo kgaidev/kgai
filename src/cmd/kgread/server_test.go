@@ -169,6 +169,12 @@ func TestServeAnswers(t *testing.T) {
 		t.Fatalf("conflicts = %+v", cs)
 	}
 
+	var g view.Graph
+	c.result("graph", "", &g)
+	if len(g.Nodes) != 2 || len(g.Links) != 1 || len(g.Decisions) != 4 || len(g.Kinds) != 1 {
+		t.Fatalf("graph = %+v", g)
+	}
+
 	var people []view.PersonRow
 	c.result("people", `{"by":"actor"}`, &people)
 	if len(people) != 2 || people[0].Name != "alice" {

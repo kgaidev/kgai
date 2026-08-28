@@ -1,6 +1,7 @@
 package view
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -278,5 +279,45 @@ func TestChangedAfterAppend(t *testing.T) {
 	}
 	if n := Load(dir); n.Stats.Decisions != 5 || n.Status().Counts.Conflicts != 1 {
 		t.Fatalf("reloaded = %+v", n.Status())
+	}
+}
+
+func TestGraph(t *testing.T) {
+	m, _ := load(t)
+	g := m.Graph()
+	if len(g.Nodes) != 2 || g.Nodes[0].Name != "Invoice" || g.Nodes[0].Decisions != 4 || g.Nodes[0].Heads != 2 ||
+		g.Nodes[1].Name != "Pricing" || g.Nodes[1].Decisions != 1 || g.Nodes[1].Heads != 0 {
+		t.Fatalf("nodes = %+v", g.Nodes)
+	}
+	if len(g.Links) != 1 || g.Links[0] != (GraphLink{From: viewtest.Invoice, To: viewtest.Pricing, Kind: "PART_OF"}) {
+		t.Fatalf("links = %+v", g.Links)
+	}
+	if len(g.Kinds) != 1 || g.Kinds[0] != (Count{Key: "feature", N: 2}) {
+		t.Fatalf("kinds = %+v", g.Kinds)
+	}
+	if len(g.Decisions) != 4 {
+		t.Fatalf("decisions = %+v", g.Decisions)
+	}
+	// Newest first: the note, the two competing heads, the definition they replaced.
+	note, base := g.Decisions[0], g.Decisions[3]
+	if note.State != "note" || len(note.Elements) != 1 || note.Elements[0] != viewtest.Invoice || len(note.Governs) != 0 || len(note.Supersedes) != 0 {
+		t.Fatalf("note = %+v", note)
+	}
+	if base.State != "superseded" || len(base.Elements) != 2 || len(base.Governs) != 1 || base.Governs[0] != viewtest.Invoice {
+		t.Fatalf("base = %+v", base)
+	}
+	for _, d := range g.Decisions[1:3] {
+		if d.State != "head" || len(d.Supersedes) != 1 || d.Supersedes[0] != base.ID || len(d.Governs) != 1 {
+			t.Fatalf("head = %+v", d)
+		}
+	}
+	// The webview iterates every list: none may come out as null.
+	b, err := json.Marshal(g)
+	if err != nil || strings.Contains(string(b), "null") {
+		t.Fatalf("json = %s (%v)", b, err)
+	}
+	// An empty store draws an empty graph, not nulls.
+	if b, _ := json.Marshal(Load(t.TempDir()).Graph()); strings.Contains(string(b), "null") {
+		t.Fatalf("empty json = %s", b)
 	}
 }

@@ -3,6 +3,7 @@ package view
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -659,4 +660,102 @@ func (m *Model) FilterValues() Filters {
 		f.Installs = append(f.Installs, Count{Key: sh.ID, N: sh.Decisions})
 	}
 	return f
+}
+
+// ---- graph ----------------------------------------------------------------------------
+
+// GraphNode is one element as the graph view draws it.
+type GraphNode struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Decisions int    `json:"decisions"` // how many decisions shaped it: its size
+	Heads     int    `json:"heads"`     // more than one: contested
+}
+
+// GraphLink is one live link between two elements.
+type GraphLink struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	Kind string `json:"kind"`
+}
+
+// GraphDecision is one decision with what it touched, for the graph's decision layer.
+type GraphDecision struct {
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	Day        string   `json:"day"`
+	Actor      string   `json:"actor"`
+	State      string   `json:"state"`      // head | superseded | note
+	Elements   []string `json:"elements"`   // every element it shaped
+	Governs    []string `json:"governs"`    // the ones it took authority over
+	Supersedes []string `json:"supersedes"` // the decisions it replaced, when they are in this log
+}
+
+// Graph is the live graph and the decisions behind it: what the graph view draws.
+type Graph struct {
+	Nodes     []GraphNode     `json:"nodes"`
+	Links     []GraphLink     `json:"links"`
+	Decisions []GraphDecision `json:"decisions"`
+	Kinds     []Count         `json:"kinds"` // elements per kind, largest first
+}
+
+// Graph returns every element, every live link between two known elements, and every
+// decision with the elements it shaped. Elements come kind, name, id (the sidebar's
+// order); links in key order; decisions newest first. Lists are never null.
+func (m *Model) Graph() Graph {
+	p := m.Proj
+	g := Graph{Nodes: []GraphNode{}, Links: []GraphLink{}, Decisions: []GraphDecision{}, Kinds: []Count{}}
+	byKind := map[string]int{}
+	for _, e := range m.Elements() {
+		kind := kindOf(e)
+		byKind[kind]++
+		g.Nodes = append(g.Nodes, GraphNode{ID: e.ID, Kind: kind, Name: p.ElementName(e.ID),
+			Decisions: len(p.ShapedBy(e.ID)), Heads: len(p.Heads(e.ID))})
+	}
+	for _, k := range replay.SortedKeys(byKind) {
+		g.Kinds = append(g.Kinds, Count{Key: k, N: byKind[k]})
+	}
+	sort.SliceStable(g.Kinds, func(i, j int) bool { return g.Kinds[i].N > g.Kinds[j].N })
+	for _, k := range replay.SortedKeys(p.Links) {
+		l := p.Links[k]
+		if _, ok := p.Elements[l.From]; !ok {
+			continue
+		}
+		if _, ok := p.Elements[l.To]; !ok {
+			continue
+		}
+		g.Links = append(g.Links, GraphLink{From: l.From, To: l.To, Kind: l.Kind})
+	}
+	shaped := map[string][]replay.Shape{}
+	for _, k := range replay.SortedKeys(p.Shapes) {
+		s := p.Shapes[k]
+		shaped[s.Decision] = append(shaped[s.Decision], s)
+	}
+	sup := map[string][]string{}
+	for _, k := range replay.SortedKeys(p.Supersedes) {
+		s := p.Supersedes[k]
+		if _, ok := p.Decisions[s.To]; ok {
+			sup[s.From] = append(sup[s.From], s.To)
+		}
+	}
+	ds, _ := m.Decisions(DecisionFilter{})
+	for _, d := range ds {
+		gd := GraphDecision{ID: d.ID, Title: d.Title, Day: day(d.Time), Actor: d.Actor, State: m.State(d.ID),
+			Elements: []string{}, Governs: []string{}, Supersedes: []string{}}
+		for _, s := range shaped[d.ID] {
+			if _, ok := p.Elements[s.Element]; !ok {
+				continue
+			}
+			gd.Elements = append(gd.Elements, s.Element)
+			if s.Authority {
+				gd.Governs = append(gd.Governs, s.Element)
+			}
+		}
+		if v := sup[d.ID]; v != nil {
+			gd.Supersedes = v
+		}
+		g.Decisions = append(g.Decisions, gd)
+	}
+	return g
 }
