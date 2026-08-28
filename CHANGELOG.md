@@ -26,6 +26,13 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   every platform an editor runs on, Windows included, so nothing else is installed.
   Not published to a marketplace yet: the `vscode extension` workflow packages one
   VSIX per platform as a build artifact.
+- **`examples/acme-shop` — a demo project.** A fictional shop's checkout and billing as
+  three people shaped it between February and August 2026: 61 decisions, vendors
+  replaced, a cart moved between stores, two dead ends recorded, one conflict resolved
+  and one still open — a store the engine accepts (`kg rebuild` applies all 61) and the
+  editor extension shows. Generated from `src/internal/view/viewtest/demo.go`, which a
+  test keeps valid (hashes, hash chains, the story's shape); the screenshots in the
+  extension's README are of it.
 - **`internal/view` — the store as a read model.** Every list, detail and tally a
   viewer shows, as plain data in the reader's words, so any front end renders the same
   answers; `internal/replay` — the log's projection with no database behind it — now

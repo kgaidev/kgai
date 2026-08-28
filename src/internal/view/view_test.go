@@ -321,3 +321,62 @@ func TestGraph(t *testing.T) {
 		t.Fatalf("empty json = %s", b)
 	}
 }
+
+// The demo store must be a store the engine accepts: hashes verify, each shard chains,
+// and the story has the shape the screenshots rely on.
+func TestDemo(t *testing.T) {
+	viewtest.Isolate(t)
+	dir := t.TempDir()
+	if err := viewtest.WriteDemo(filepath.Join(dir, ".kgai", "store")); err != nil {
+		t.Fatal(err)
+	}
+	m := Load(dir)
+	if m.Err != nil {
+		t.Fatal(m.Err)
+	}
+	installs, shards := viewtest.BuildDemo().Shards()
+	recorded := 0
+	for _, id := range installs {
+		recorded += len(shards[id])
+	}
+	c := m.Status().Counts
+	if c.Decisions != recorded || recorded < 50 || c.People != 3 || c.Installs != 3 || c.Conflicts != 1 || c.Elements < 40 || c.Links < 50 {
+		t.Fatalf("counts = %+v (recorded %d)", c, recorded)
+	}
+	for _, id := range installs {
+		prev := ""
+		for i, e := range shards[id] {
+			if !e.Verify() {
+				t.Fatalf("%s #%d: hash does not verify", id, i)
+			}
+			if i > 0 && (len(e.Parents) != 1 || e.Parents[0] != prev) {
+				t.Fatalf("%s #%d: parents = %v, want [%s]", id, i, e.Parents, prev)
+			}
+			prev = e.Hash
+		}
+	}
+	// The one open conflict is the refund window; the shipping threshold was resolved.
+	cs := m.Conflicts()
+	if len(cs) != 1 || cs[0].Name != "Refund Window" || len(cs[0].Heads) != 2 {
+		t.Fatalf("conflicts = %+v", cs)
+	}
+	ship, _ := m.Element(viewtest.DemoElement("policy", "Free Shipping Threshold"))
+	if ship.Heads != 1 || ship.ShapedBy != 3 {
+		t.Fatalf("shipping threshold = %+v", ship)
+	}
+	// Invoice left Pricing for Order; the first decision on it is superseded.
+	inv, _ := m.Element(viewtest.DemoElement("feature", "Invoice"))
+	var partOf []string
+	for _, l := range inv.Links {
+		if l.Kind == "PART_OF" {
+			partOf = append(partOf, l.Other.Name)
+		}
+	}
+	if strings.Join(partOf, ",") != "Order" || inv.History[0].State != "superseded" {
+		t.Fatalf("invoice = %+v", inv)
+	}
+	g := m.Graph()
+	if len(g.Nodes) != c.Elements || len(g.Links) != c.Links || len(g.Decisions) != recorded {
+		t.Fatalf("graph = %d nodes %d links %d decisions", len(g.Nodes), len(g.Links), len(g.Decisions))
+	}
+}

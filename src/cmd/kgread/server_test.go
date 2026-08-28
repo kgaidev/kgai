@@ -298,3 +298,15 @@ func TestWriteFixture(t *testing.T) {
 	}
 	viewtest.WriteStore(t, filepath.Join(out, ".kgai", "store"))
 }
+
+// TestWriteDemo writes the demo store (examples/acme-shop/.kgai/store) when
+// KGREAD_DEMO_OUT names the store root. Run it after changing the demo's story.
+func TestWriteDemo(t *testing.T) {
+	out := os.Getenv("KGREAD_DEMO_OUT")
+	if out == "" {
+		t.Skip("set KGREAD_DEMO_OUT to write the demo store")
+	}
+	if err := viewtest.WriteDemo(out); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -22,6 +22,8 @@
 .kgai/
 # … except the fixture store the editor extension's tests read
 !/editors/vscode/test/fixture/.kgai/
+# … and the demo project's store, which ships with the repository
+!/examples/acme-shop/.kgai/
 
 # Local build artifacts of the readers
 /src/kgread
