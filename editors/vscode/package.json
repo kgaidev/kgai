@@ -277,7 +277,7 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run build && node --test test/reader.test.mjs",
+    "test": "npm run typecheck && npm run build && node --test test/reader.test.mjs test/html.test.mjs",
     "test:vscode": "npm run build && node test/vscode/runTest.mjs",
     "package": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\" && vsce package"
   },
@@ -289,6 +289,7 @@
     "@vscode/vsce": "^3.3.0",
     "esbuild": "^0.25.0",
     "mocha": "^11.1.0",
+    "ovsx": "1.1.1",
     "typescript": "^5.7.0"
   }
 }
