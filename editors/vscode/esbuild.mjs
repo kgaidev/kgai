@@ -4,7 +4,7 @@ import * as esbuild from "esbuild";
 
 const watch = process.argv.includes("--watch");
 const ctx = await esbuild.context({
-  entryPoints: ["src/extension.ts", "src/reader.ts", "test/vscode/suite.ts"],
+  entryPoints: ["src/extension.ts", "src/reader.ts", "src/html.ts", "test/vscode/suite.ts"],
   outdir: "dist",
   outbase: ".",
   bundle: true,

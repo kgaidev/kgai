@@ -80,7 +80,11 @@ export function bars(counts: Count[], opts: { nav?: "element" | "person" | "deci
       const id = opts.ids?.get(c.key) ?? c.key;
       const text = opts.nav ? nav(opts.nav, id, label) : `<span>${esc(label)}</span>`;
       const cls = opts.cls ? opts.cls(c.key) : "";
-      return `<div class="bar-row"><div class="bar-label">${text}</div><div class="bar-track"><div class="bar ${cls}" style="width:${Math.max(1, Math.round((100 * c.n) / max))}%"></div></div><div class="bar-n">${c.n}</div></div>`;
+      // No inline style: the webview's CSP allows only nonced stylesheets, and a
+      // style attribute would be dropped — leaving every bar at full width. An SVG
+      // width attribute is not a style, so the proportion survives.
+      const pct = Math.max(1, Math.round((100 * c.n) / max));
+      return `<div class="bar-row"><div class="bar-label">${text}</div><svg class="bar-track" width="100%" height="12" aria-hidden="true"><rect class="bar ${cls}" x="0" y="0" width="${pct}%" height="12" rx="3"/></svg><div class="bar-n">${c.n}</div></div>`;
     })
     .join("");
   const more = counts.length > shown.length ? `<p class="muted">… and ${counts.length - shown.length} more</p>` : "";
@@ -386,10 +390,10 @@ p { margin: 4px 0; }
 .bars { display: flex; flex-direction: column; gap: 3px; }
 .bar-row { display: grid; grid-template-columns: minmax(80px, 36%) 1fr 44px; gap: 8px; align-items: center; }
 .bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar-track { height: 12px; }
-.bar { height: 12px; border-radius: 3px; background: var(--vscode-charts-blue); min-width: 2px; }
-.bar.kind-bar { background: var(--vscode-charts-purple); } .bar.person-bar { background: var(--vscode-charts-red); } .bar.link-bar { background: var(--vscode-charts-yellow); }
-.bar.op-defined-element { background: var(--vscode-charts-blue); } .bar.op-set-property { background: var(--vscode-charts-purple); } .bar.op-added-link { background: var(--vscode-charts-green); } .bar.op-removed-link { background: var(--vscode-charts-orange); }
+.bar-track { display: block; height: 12px; }
+.bar { fill: var(--vscode-charts-blue); }
+.bar.kind-bar { fill: var(--vscode-charts-purple); } .bar.person-bar { fill: var(--vscode-charts-red); } .bar.link-bar { fill: var(--vscode-charts-yellow); }
+.bar.op-defined-element { fill: var(--vscode-charts-blue); } .bar.op-set-property { fill: var(--vscode-charts-purple); } .bar.op-added-link { fill: var(--vscode-charts-green); } .bar.op-removed-link { fill: var(--vscode-charts-orange); }
 .bar-n { text-align: right; font-variant-numeric: tabular-nums; }
 details.technical { margin-top: 16px; }
 details.technical summary { cursor: pointer; color: var(--vscode-descriptionForeground); }
