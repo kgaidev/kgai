@@ -184,6 +184,13 @@ finds the store as `kg` does and only reads it — it ships its own small reader
 nothing else is installed and an open editor can never collide with the engine. It
 lives in [editors/vscode](editors/vscode/); packages are built by CI, not yet published.
 
+![The kgai graph in VS Code: a demo shop's elements coloured by kind and sized by the decisions that shaped them](editors/vscode/media/screenshots/graph.png)
+
+The picture shows [examples/acme-shop](examples/acme-shop/), a fictional shop's checkout
+and billing as three people shaped it over seven months — 61 decisions, one still
+contested — recorded with kgai so you can see the tools on a real story. Open the folder
+(copied out as a folder of its own) in VS Code with the extension, or run `kg` in it.
+
 ## Under the hood
 
 The nodes are **domain elements** (features, services, business objects) joined by links; a

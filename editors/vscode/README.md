@@ -10,6 +10,8 @@ kgai itself records decisions through the `kg` CLI and the Claude Code plugin; t
 extension shows what they recorded. It works in VS Code and in the editors built on
 it (Cursor, Windsurf and others that install from Open VSX).
 
+![The graph: elements coloured by kind and sized by the decisions that shaped them, links as arrows, the contested one ringed in red](media/screenshots/graph.png)
+
 ## What you get
 
 - **Decisions** — newest first. Search the title and rationale as you type; narrow by
@@ -34,6 +36,41 @@ it (Cursor, Windsurf and others that install from Open VSX).
   log, so a decision recorded by `kg`, a sync or a rebuild shows up within two seconds.
 
 Every page explains its words in place, and **kgai: Help** defines all of them.
+
+## In pictures
+
+Click a node in the graph and the decision opens beside it — the rationale, what it
+changed, what it replaced and what replaced it:
+
+![A decision beside the graph: rationale, references, the mutations, the elements it shaped, what it replaces and what replaced it](media/screenshots/graph-decision.png)
+
+An element: its properties, its links in both directions, and every decision that
+shaped it — with the head marks `kg history` gives:
+
+![An element page: properties, links, the history of decisions with superseded / note / head marks](media/screenshots/element.png)
+
+A contested element — two decisions govern it at once, side by side:
+
+![A conflict: two competing decisions on the Refund Window](media/screenshots/conflict.png)
+
+The overview — counts, where the store lives and which rule chose it, installs, charts:
+
+![The overview page with counts and charts](media/screenshots/overview.png)
+
+A person — how much of their work still stands, whose decisions they replaced and who
+replaced theirs, what they shaped, the names they were credited as:
+
+![A person page: heads, superseded, notes, whose decisions they replaced, elements they shaped most](media/screenshots/person.png)
+
+The decisions as a layer over the graph — each hangs on the elements it shaped, dashed
+to the ones it replaced:
+
+![The graph with the decisions layer switched on](media/screenshots/graph-decisions.png)
+
+The pictures show **acme-shop**, a fictional shop's checkout and billing as three people
+shaped it over seven months — 61 decisions, one still contested. It lives in
+[`examples/acme-shop`](https://github.com/kgaidev/kgai/tree/main/examples/acme-shop) of the
+kgai repository; copy it out as a folder of its own (or clone it) and open it.
 
 ## Which store is shown
 
