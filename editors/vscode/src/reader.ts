@@ -239,6 +239,38 @@ export interface Filters {
 }
 export type PeopleBy = "actor" | "author";
 
+/** One element as the graph draws it. */
+export interface GraphNode {
+  id: string;
+  kind: string;
+  name: string;
+  decisions: number; // how many decisions shaped it: its size
+  heads: number; // more than one: contested
+}
+export interface GraphLink {
+  from: string;
+  to: string;
+  kind: string;
+}
+/** One decision with what it touched, for the graph's decision layer. */
+export interface GraphDecision {
+  id: string;
+  title: string;
+  day: string;
+  actor: string;
+  state: State;
+  elements: string[]; // every element it shaped
+  governs: string[]; // the ones it took authority over
+  supersedes: string[]; // the decisions it replaced, when they are in this log
+}
+/** The live graph and the decisions behind it. */
+export interface Graph {
+  nodes: GraphNode[];
+  links: GraphLink[];
+  decisions: GraphDecision[];
+  kinds: Count[]; // elements per kind, largest first
+}
+
 // ---- the wire -------------------------------------------------------------------------
 
 interface Pending {
@@ -395,6 +427,9 @@ export class Reader extends EventEmitter {
   }
   conflicts(): Promise<Conflict[]> {
     return this.request("conflicts");
+  }
+  graph(): Promise<Graph> {
+    return this.request("graph");
   }
   people(by: PeopleBy): Promise<PersonRow[]> {
     return this.request("people", { by });

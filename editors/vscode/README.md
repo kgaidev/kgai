@@ -24,6 +24,12 @@ it (Cursor, Windsurf and others that install from Open VSX).
   who replaced them, activity by month, their latest decisions. Counted by who recorded
   (the install's identity) or who is credited (the author field).
 - **Overview** — counts, where the store lives and which rule chose it, charts.
+- **Graph** — the live graph on a canvas: elements coloured by kind and sized by the
+  decisions that shaped them, links as arrows, contested elements ringed in red, and the
+  decisions themselves as a layer you can switch on (hanging on the elements they shaped,
+  dashed to the ones they replaced). Search, hide kinds, drag, zoom; hover shows the
+  neighbours; a click opens the node in the detail panel. It follows the log like
+  everything else.
 - A status bar item with the number of decisions and conflicts; the view follows the
   log, so a decision recorded by `kg`, a sync or a rebuild shows up within two seconds.
 

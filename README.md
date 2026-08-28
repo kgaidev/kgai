@@ -178,7 +178,8 @@ trivial edits recorded nothing even when nudged.
 
 The **kgai extension for VS Code** (and the editors built on it — Cursor, Windsurf)
 puts the project's decisions in the sidebar: search and exact filters over the log,
-elements with their history, contested elements, people, an overview with charts. It
+elements with their history, contested elements, people, an overview with charts, and
+the live graph on a canvas with the decisions as a layer. It
 finds the store as `kg` does and only reads it — it ships its own small reader, so
 nothing else is installed and an open editor can never collide with the engine. It
 lives in [editors/vscode](editors/vscode/); packages are built by CI, not yet published.

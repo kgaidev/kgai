@@ -14,7 +14,9 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
   expressions), elements grouped by kind with their properties, links and the same
   history `kg history` gives, contested elements with the competing decisions side by
   side, people — how much of their work still stands, whom they replaced, activity by
-  month — and an overview with charts; a detail panel with Back for every jump, a status
+  month — an overview with charts, and the live graph on a canvas (elements coloured by
+  kind and sized by their decisions, links as arrows, the decisions as a layer; a click
+  opens the node); a detail panel with Back for every jump, a status
   bar item, and a Help page defining every word (head / superseded / note, recorded by,
   credited to, install, sequence). It finds the store exactly as `kg` does, reports a
   pending `.kgairc` without approving it, and follows the log as `kg`, a sync or a rebuild

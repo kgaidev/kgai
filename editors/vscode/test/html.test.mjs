@@ -24,3 +24,15 @@ test("the whole document keeps its CSP without unsafe-inline", () => {
   assert.ok(!/unsafe-inline/.test(doc));
   assert.ok(!/ style="/.test(doc), "no inline style anywhere in a rendered page");
 });
+
+
+test("the graph page loads its script by nonce and keeps the CSP", () => {
+  const doc = html.graphDocument("abc", "vscode-resource:", "https://x.test/dist/src/webview/graph.js");
+  assert.match(doc, /script-src 'nonce-abc'/);
+  assert.match(doc, /<script nonce="abc" src="https:\/\/x\.test\/dist\/src\/webview\/graph\.js">/);
+  assert.ok(!/unsafe-inline/.test(doc));
+  assert.ok(!/ style="/.test(doc), "no inline style anywhere on the graph page");
+  for (const id of ["c", "q", "matches", "kinds", "decisions", "decisions-n", "counts", "project", "tip", "fit", "help", "empty"]) {
+    assert.match(doc, new RegExp(` id="${id}"`), `the page has #${id}, which the script looks up`);
+  }
+});

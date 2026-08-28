@@ -6,6 +6,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { DetailPanel, type DetailHost, type Page } from "./detail";
+import { GraphPanel, type GraphHost } from "./graphPanel";
 import { Reader, readerPath, type DecisionFilter, type Decisions, type PeopleBy, type State, type Store } from "./reader";
 import { ConflictItem, ConflictsProvider, DecisionsProvider, ElementsProvider, GroupItem, PeopleProvider, type Host } from "./trees";
 
@@ -18,7 +19,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<App> {
 
 export function deactivate(): void {}
 
-export class App implements vscode.Disposable, Host, DetailHost {
+export class App implements vscode.Disposable, Host, DetailHost, GraphHost {
   filter: DecisionFilter = {};
   peopleBy: PeopleBy = "actor";
   elementsText = "";
@@ -31,6 +32,7 @@ export class App implements vscode.Disposable, Host, DetailHost {
   readonly conflictsProvider = new ConflictsProvider(this);
   readonly peopleProvider = new PeopleProvider(this);
   readonly detail = new DetailPanel(this);
+  readonly graph: GraphPanel;
 
   private rd: Reader | undefined;
   private status: Store | undefined;
@@ -47,6 +49,7 @@ export class App implements vscode.Disposable, Host, DetailHost {
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.ready = new Promise((resolve) => (this.markReady = resolve));
+    this.graph = new GraphPanel(this, context.extensionUri);
     this.decisionsView = vscode.window.createTreeView("kgai.decisions", { treeDataProvider: this.decisionsProvider, showCollapseAll: false });
     // Collapse All / Expand All are the extension's own pair (VS Code only offers the first).
     this.elementsView = vscode.window.createTreeView("kgai.elements", { treeDataProvider: this.elementsProvider, showCollapseAll: false });
@@ -69,7 +72,7 @@ export class App implements vscode.Disposable, Host, DetailHost {
     this.conflictsView.onDidExpandElement((e) => e.element instanceof ConflictItem && this.collapsedConflicts.delete(e.element.conflict.elementId));
     this.statusBar.name = "kgai";
     this.statusBar.command = "kgai.overview";
-    this.disposables.push(this.output, this.statusBar, this.decisionsView, this.elementsView, this.conflictsView, this.peopleView, this.detail);
+    this.disposables.push(this.output, this.statusBar, this.decisionsView, this.elementsView, this.conflictsView, this.peopleView, this.detail, this.graph);
     this.registerCommands();
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -171,6 +174,7 @@ export class App implements vscode.Disposable, Host, DetailHost {
     this.refreshTrees();
     if (changed) {
       void this.detail.refresh();
+      void this.graph.refresh();
     }
   }
 
@@ -249,6 +253,10 @@ export class App implements vscode.Disposable, Host, DetailHost {
 
   // ---- navigation -----------------------------------------------------------------------
 
+  help(): void {
+    void this.detail.show({ kind: "help" });
+  }
+
   open(kind: string, id: string): void {
     switch (kind) {
       case "decision":
@@ -283,6 +291,7 @@ export class App implements vscode.Disposable, Host, DetailHost {
     const cmd = (name: string, fn: (...args: any[]) => unknown) => this.disposables.push(vscode.commands.registerCommand(name, fn));
     cmd("kgai.overview", () => this.detail.show({ kind: "overview" }));
     cmd("kgai.help", () => this.detail.show({ kind: "help" }));
+    cmd("kgai.graph", () => this.graph.show());
     cmd("kgai.refresh", () => this.refresh());
     cmd("kgai.showDecision", (id: string) => this.detail.show({ kind: "decision", id }));
     cmd("kgai.showElement", (id: string) => this.detail.show({ kind: "element", id }));

@@ -72,6 +72,18 @@ test("answers about the fixture store", async () => {
     assert.equal(conflicts.length, 1);
     assert.equal(conflicts[0].heads.length, 2);
 
+    const graph = await rd.graph();
+    assert.deepEqual(
+      graph.nodes.map((n) => [n.name, n.decisions, n.heads]),
+      [
+        ["Invoice", 4, 2],
+        ["Pricing", 1, 0],
+      ],
+    );
+    assert.deepEqual(graph.links, [{ from: graph.nodes[0].id, to: graph.nodes[1].id, kind: "PART_OF" }]);
+    assert.equal(graph.decisions.length, 4);
+    assert.deepEqual(graph.kinds, [{ key: "feature", n: 2 }]);
+
     const people = await rd.people("actor");
     assert.deepEqual(
       people.map((p) => p.name),

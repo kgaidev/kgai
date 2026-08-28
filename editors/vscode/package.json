@@ -118,6 +118,12 @@
         "icon": "$(folder-opened)"
       },
       {
+        "command": "kgai.graph",
+        "title": "Graph",
+        "category": "kgai",
+        "icon": "$(type-hierarchy)"
+      },
+      {
         "command": "kgai.searchElements",
         "title": "Search Elements",
         "category": "kgai",
@@ -202,6 +208,11 @@
           "group": "navigation@5"
         },
         {
+          "command": "kgai.graph",
+          "when": "view == kgai.elements",
+          "group": "navigation@0"
+        },
+        {
           "command": "kgai.searchElements",
           "when": "view == kgai.elements",
           "group": "navigation@1"
@@ -282,6 +293,7 @@
     "package": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\" && vsce package"
   },
   "devDependencies": {
+    "@types/d3-force": "3.0.10",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.90.0",
@@ -291,5 +303,8 @@
     "mocha": "^11.1.0",
     "ovsx": "1.1.1",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "d3-force": "3.0.0"
   }
 }

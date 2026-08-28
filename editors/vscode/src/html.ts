@@ -312,6 +312,7 @@ ${key("kgai: Search Decisions", "type to search title and rationale; pick one to
 ${key("kgai: Filter Decisions", "recorded by, credited to, state, element kind, element, install, dates, order, regular expression")}
 ${key("kgai: Clear Filters", "back to every decision, newest first")}
 ${key("kgai: Overview", "counts, where the store lives, charts")}
+${key("kgai: Graph", "the live graph on a canvas: elements coloured by kind and sized by their decisions, links as arrows, the decisions as a layer; a click opens the node here")}
 ${key("kgai: Refresh", "re-read the log now (it is followed every two seconds anyway)")}
 ${key("kgai: Open Project Folder…", "show another project's store, resolved there as kg would")}
 ${section("What this view promises")}
@@ -414,4 +415,69 @@ document.addEventListener('click', e => {
   if (e.target.closest('#help')) { vscode.postMessage({ type: 'help' }); return; }
 });
 document.addEventListener('keydown', e => { if (e.altKey && e.key === 'ArrowLeft') { vscode.postMessage({ type: 'back' }); } });
+`;
+
+/** The graph page: a canvas the bundled script draws on, a card with search, kinds and layers. */
+export function graphDocument(nonce: string, cspSource: string, scriptUri: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>kgai: Graph</title>
+<style nonce="${nonce}">${graphCss}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title"><b>kgai</b> · graph <span id="project" class="muted"></span> <span id="counts" class="muted"></span></div>
+<div class="card">
+  <div class="h">Find an element</div>
+  <input id="q" type="search" placeholder="name…" autocomplete="off" spellcheck="false">
+  <div id="matches"></div>
+  <div class="h">Kinds</div>
+  <div id="kinds"></div>
+  <div class="h">Layers</div>
+  <label class="layer"><input type="checkbox" id="decisions"> decisions <span class="n" id="decisions-n"></span></label>
+  <div class="h">Controls</div>
+  <div class="hint">drag a node · wheel zooms · drag the background to pan · hover for neighbours · click opens</div>
+  <div class="buttons"><button id="fit">Fit to view</button><button id="help" title="What the words mean">Help</button></div>
+</div>
+<div id="tip"></div>
+<div id="foot">Size = decisions that shaped the element; colour = its kind; a red ring = contested. Edges are the live links, arrow at the target. The decisions layer hangs each decision (green = in force, grey = replaced, blue = note) on the elements it shaped and joins it, dashed, to the ones it replaced.</div>
+<div id="empty"></div>
+<script nonce="${nonce}" src="${esc(scriptUri)}"></script>
+</body>
+</html>`;
+}
+
+const graphCss = `
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+#c { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+#c.grabbing { cursor: grabbing; }
+#c.point { cursor: pointer; }
+.muted { color: var(--vscode-descriptionForeground); }
+#title { position: absolute; top: 8px; left: 12px; pointer-events: none; }
+#title b { color: var(--vscode-textLink-foreground); }
+.card { position: absolute; top: 36px; left: 12px; width: 224px; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, rgba(128,128,128,.35))); border-radius: 6px; padding: 10px 12px; box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+.card .h { font-size: 80%; text-transform: uppercase; letter-spacing: .06em; color: var(--vscode-descriptionForeground); margin: 10px 0 4px; }
+.card .h:first-child { margin-top: 0; }
+input[type=search] { width: 100%; box-sizing: border-box; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: 3px; padding: 4px 6px; }
+input[type=search]:focus { outline: 1px solid var(--vscode-focusBorder); }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.kind, #matches .m { display: flex; align-items: center; gap: 8px; padding: 2px 4px; margin: 0 -4px; border-radius: 3px; cursor: pointer; }
+.kind:hover, #matches .m:hover, #matches .m.sel { background: var(--vscode-list-hoverBackground); }
+.kind.off { opacity: .45; }
+.n { margin-left: auto; color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; }
+#matches .none { padding: 2px 0; color: var(--vscode-descriptionForeground); }
+label.layer { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+label.layer .n { margin-left: auto; }
+.hint { color: var(--vscode-descriptionForeground); font-size: 90%; line-height: 1.4; }
+.buttons { display: flex; gap: 6px; margin-top: 10px; }
+button { flex: 1; font: inherit; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border: none; border-radius: 3px; padding: 4px 10px; cursor: pointer; }
+button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+#tip { position: absolute; display: none; pointer-events: none; white-space: pre-line; max-width: 320px; background: var(--vscode-editorHoverWidget-background); color: var(--vscode-editorHoverWidget-foreground); border: 1px solid var(--vscode-editorHoverWidget-border); border-radius: 4px; padding: 4px 8px; font-size: 92%; }
+#foot { position: absolute; left: 12px; bottom: 8px; max-width: 320px; font-size: 85%; line-height: 1.4; color: var(--vscode-descriptionForeground); pointer-events: none; }
+#empty { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--vscode-descriptionForeground); pointer-events: none; padding: 0 260px; text-align: center; }
 `;

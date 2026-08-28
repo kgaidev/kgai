@@ -110,6 +110,19 @@ export function run(): Promise<void> {
       assert.equal(app.detail.currentPage()?.kind, "help");
     });
 
+    test("opens the graph and hands it the store", async () => {
+      await vscode.commands.executeCommand("kgai.graph");
+      assert.ok(app.graph.isOpen(), "the graph panel is open");
+      const deadline = Date.now() + 20000;
+      while (Date.now() < deadline && !app.graph.lastGraph) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.ok(app.graph.lastGraph, "the page asked for the graph and got it");
+      assert.equal(app.graph.lastGraph.nodes.length, 2);
+      assert.equal(app.graph.lastGraph.links.length, 1);
+      assert.equal(app.graph.lastGraph.decisions.length, 4);
+    });
+
     test("follows the log", async () => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       assert.ok(root);
