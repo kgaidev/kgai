@@ -72,6 +72,13 @@ shaped it over seven months — 61 decisions, one still contested. It lives in
 [`examples/acme-shop`](https://github.com/kgaidev/kgai/tree/main/examples/acme-shop) of the
 kgai repository; copy it out as a folder of its own (or clone it) and open it.
 
+The pages take the editor's colours, light themes included:
+
+![The graph in a light theme](media/screenshots/light/graph.png)
+
+Every picture above has a light-theme twin in
+[`media/screenshots/light`](https://github.com/kgaidev/kgai/tree/main/editors/vscode/media/screenshots/light).
+
 ## Which store is shown
 
 The one `kg` would use in the workspace folder (or the folder in the `kgai.projectFolder`
