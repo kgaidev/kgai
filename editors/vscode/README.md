@@ -8,7 +8,11 @@ order, exact filters.
 
 kgai itself records decisions through the `kg` CLI and the Claude Code plugin; this
 extension shows what they recorded. It works in VS Code and in the editors built on
-it (Cursor, Windsurf and others that install from Open VSX).
+it (Cursor, Windsurf and others that install from Open VSX). Install it from the
+Extensions view — search **kgai** — or from the
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=kgaidev.kgai) and
+[Open VSX](https://open-vsx.org/extension/kgaidev/kgai); the source lives in
+[kgaidev/kgai](https://github.com/kgaidev/kgai/tree/main/editors/vscode).
 
 ![The graph: elements coloured by kind and sized by the decisions that shaped them, links as arrows, the contested one ringed in red](media/screenshots/graph.png)
 

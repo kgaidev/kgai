@@ -182,7 +182,9 @@ elements with their history, contested elements, people, an overview with charts
 the live graph on a canvas with the decisions as a layer. It
 finds the store as `kg` does and only reads it — it ships its own small reader, so
 nothing else is installed and an open editor can never collide with the engine. It
-lives in [editors/vscode](editors/vscode/); packages are built by CI, not yet published.
+lives in [editors/vscode](editors/vscode/) and installs from the
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=kgaidev.kgai) or
+[Open VSX](https://open-vsx.org/extension/kgaidev/kgai) — search **kgai** in the Extensions view.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="editors/vscode/media/screenshots/graph.png">
