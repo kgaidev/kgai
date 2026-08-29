@@ -50,5 +50,19 @@ changelog_ver="$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' "$REPO/CHANGELOG.md" |
 check "plugin.json ($plugin_ver) and CHANGELOG ($changelog_ver) agree on the version" \
   "$([ -n "$plugin_ver" ] && [ "$plugin_ver" = "$changelog_ver" ]; echo $?)"
 
+# The engine release workflow fires on `v*` tags and the extension release on `vscode-v*`
+# tags; the two filters must not overlap, or an extension release also starts an engine
+# release that fails its version check (vscode-v0.2.0 did exactly that). GitHub's filter
+# globs and bash `case` globs agree on the patterns used here.
+tag_filter() { sed -n "s/^[[:space:]]*tags:[[:space:]]*\['\([^']*\)'\].*/\1/p" "$1" | head -n1; }
+engine_glob="$(tag_filter "$REPO/.github/workflows/build.yml")"
+ext_glob="$(tag_filter "$REPO/.github/workflows/vscode.yml")"
+matches() { case "$2" in $1) return 0 ;; *) return 1 ;; esac; }
+ok=0
+{ [ -n "$engine_glob" ] && [ -n "$ext_glob" ] &&
+  matches "$engine_glob" v1.5.2 && ! matches "$engine_glob" vscode-v0.2.0 &&
+  matches "$ext_glob" vscode-v0.2.0 && ! matches "$ext_glob" v1.5.2; } || ok=1
+check "release tag filters do not overlap (engine '$engine_glob', extension '$ext_glob')" "$ok"
+
 printf '\n%s passed, %s failed, %s total\n' "$PASSED" "$FAILED" "$T"
 [ "$FAILED" = 0 ] || exit 1
