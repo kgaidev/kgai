@@ -64,5 +64,28 @@ ok=0
   matches "$ext_glob" vscode-v0.2.0 && ! matches "$ext_glob" v1.5.2; } || ok=1
 check "release tag filters do not overlap (engine '$engine_glob', extension '$ext_glob')" "$ok"
 
+# The extension's package.json lives in editors/vscode, but vsce rewrites the README's
+# relative image and link paths against the repository root — 0.2.0 shipped a listing with
+# eight broken pictures. Every `vsce package` call must therefore name the directory.
+bad=""
+for src in "$REPO/.github/workflows/vscode.yml" "$REPO/editors/vscode/package.json"; do
+  calls="$(tr '\n' ' ' < "$src" | tr -s ' ' | sed 's/\\ / /g' | grep -o 'vsce package[^&|;"]*' || true)"
+  [ -n "$calls" ] || bad="$bad ${src##*/}:no-vsce-package-call"
+  printf '%s\n' "$calls" | while IFS= read -r call; do
+    [ -z "$call" ] && continue
+    case "$call" in
+      *"--baseImagesUrl https://github.com/kgaidev/kgai/raw/HEAD/editors/vscode/"*) ;;
+      *) echo " ${src##*/}:images" ;;
+    esac
+    case "$call" in
+      *"--baseContentUrl https://github.com/kgaidev/kgai/blob/HEAD/editors/vscode/"*) ;;
+      *) echo " ${src##*/}:content" ;;
+    esac
+  done > "$REPO/.hygiene-vsce.tmp"
+  bad="$bad$(cat "$REPO/.hygiene-vsce.tmp")"; rm -f "$REPO/.hygiene-vsce.tmp"
+done
+check "every vsce package call rewrites README paths under editors/vscode/" \
+  "$([ -z "$bad" ]; echo $?)" "missing:$bad"
+
 printf '\n%s passed, %s failed, %s total\n' "$PASSED" "$FAILED" "$T"
 [ "$FAILED" = 0 ] || exit 1

@@ -114,7 +114,9 @@ jobs:
             target="$(basename "$dir")"
             rm -rf bin && mkdir bin
             cp "$dir"/kgread* bin/
-            npx vsce package --target "$target" -o "packages/kgai-${{ steps.ver.outputs.version }}-$target.vsix"
+            npx vsce package --baseContentUrl https://github.com/kgaidev/kgai/blob/HEAD/editors/vscode/ \
+              --baseImagesUrl https://github.com/kgaidev/kgai/raw/HEAD/editors/vscode/ \
+              --target "$target" -o "packages/kgai-${{ steps.ver.outputs.version }}-$target.vsix"
           done
           ls -la packages
 

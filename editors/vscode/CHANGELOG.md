@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+### Fixed
+- The pictures on the Marketplace and Open VSX pages. The README's relative image paths
+  were rewritten against the repository root instead of `editors/vscode/`, so every
+  screenshot in the 0.2.0 listing was a broken link. Nothing in the extension changed.
+
 ## 0.2.0
 
 ### Added
