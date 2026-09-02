@@ -7,7 +7,8 @@
 //   - git:  the store dir is a git repo; sync = fetch + union merge + push (BYO git)
 //   - s3:   write-once segments in any S3-compatible bucket (BYO S3)
 //   - kgai: the kgai cloud — same segment protocol over an authorized HTTP API
-//     (server adds projection/UI/MCP on top); not wired up yet
+//     (server adds projection/UI/MCP on top); the transport ships, the hosted
+//     service is in closed beta — point it at a broker with KGAI_CLOUD_URL
 package remote
 
 import (
@@ -38,7 +39,7 @@ type Remote interface {
 // For picks the transport for a remote URL:
 //
 //	s3://bucket/prefix          → S3 segment sync
-//	kgai://org/project          → kgai cloud (not yet available)
+//	kgai://org/project          → kgai cloud broker (needs KGAI_CLOUD_URL + token)
 //	anything else (or empty)    → git (empty = local commit only)
 //
 // DirectoryCommitter is implemented by transports that commit the STORE DIRECTORY
