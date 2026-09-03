@@ -70,6 +70,18 @@ time, so two people who record `feature:Invoice` mint the **same** id and the gr
 `MERGE`s them — no coordination, no duplicate islands. A `Decision`'s id is a content
 hash, so identical content is idempotent and any change is a new immutable decision.
 
+Because the kind is half of the identity, a wrong kind used to fork a same-named twin
+silently. Ingest therefore resolves every reference against the live graph before
+hashing: a bare `name` binds to the element already carrying that name (kind `concept`
+only when the name is new, ambiguous when several carry it), and an existing name
+under a contradicting kind is refused unless the upsert declares `"new_element": true`
+(a deliberate facet, e.g. `concept:LakeFS` vs `service:LakeFS`). This is write-time
+input validation only — events still store final ids and replay is untouched. Twins
+that predate the guard (or arrive by racing writers) stay reachable at read time:
+`kg history` lists same-named elements (`same_name`), offers `candidates` for an
+ambiguous bare name, and merges elements joined by an `ALIAS_OF` link into one
+timeline.
+
 ## Sync and conflicts
 
 > **Status:** the **S3 transport is validated and supported** — exercised with concurrent

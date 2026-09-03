@@ -93,6 +93,13 @@ func (e *Engine) Ingest(in IngestInput, dryRun bool) (IngestResult, error) {
 	defer g.Close()
 
 	res := IngestResult{DryRun: dryRun, Elements: map[string]string{}}
+	// One graph scan per batch: every reference resolves against the elements that
+	// exist now plus the ones this batch creates (dry runs included, so their
+	// resolution report matches what a real ingest would do).
+	resolver, err := newRefResolver(g)
+	if err != nil {
+		return res, err
+	}
 	// One log scan per batch: NextLamport reads every shard, so at tens of thousands
 	// of decisions calling it per decision would be quadratic.
 	nextLam := int64(0)
@@ -116,7 +123,7 @@ func (e *Engine) Ingest(in IngestInput, dryRun bool) (IngestResult, error) {
 				return res, err
 			}
 		}
-		dr, ev, err := e.buildDecisionEvent(g, di, &res)
+		dr, ev, err := e.buildDecisionEvent(g, resolver, di, &res)
 		if err != nil {
 			return res, err
 		}
@@ -162,7 +169,92 @@ func (e *Engine) Ingest(in IngestInput, dryRun bool) (IngestResult, error) {
 	return res, nil
 }
 
-func (e *Engine) buildDecisionEvent(g *graph.Graph, di DecisionInput, res *IngestResult) (DecisionResult, event.Event, error) {
+// ---- reference resolution (anti-fork guard) --------------------------------
+
+// elemRef is one existing element, as seen by the resolver.
+type elemRef struct{ id, kind, name string }
+
+func (r elemRef) String() string { return r.kind + ":" + r.name }
+
+// refResolver resolves element references for one ingest batch against the live graph
+// PLUS the elements the batch itself creates. It closes the silent-fork gap of
+// name+kind identity: a bare name binds to the element already carrying that name, and
+// a kind that contradicts an existing same-named element is refused with the
+// candidates — never quietly minting a twin whose decisions element-walks
+// (context/history/as-of) could not reach. Creating a same-named element on purpose (a
+// facet like concept:LakeFS next to service:LakeFS) stays possible via `new_element`.
+type refResolver struct {
+	known  map[string]bool      // element id → exists (graph, or earlier in this batch)
+	byName map[string][]elemRef // Normalize(name) → elements carrying that name
+}
+
+func newRefResolver(g *graph.Graph) (*refResolver, error) {
+	rows, err := g.Raw(`MATCH (n:Element) RETURN n.id AS id, n.kind AS kind, n.name AS name`)
+	if err != nil {
+		return nil, err
+	}
+	r := &refResolver{known: map[string]bool{}, byName: map[string][]elemRef{}}
+	for _, row := range rows {
+		r.add(asStr(row["id"]), asStr(row["kind"]), asStr(row["name"]))
+	}
+	return r, nil
+}
+
+// add registers an element so later references in the same batch see it.
+func (r *refResolver) add(id, kind, name string) {
+	if id == "" || r.known[id] {
+		return
+	}
+	r.known[id] = true
+	n := event.Normalize(name)
+	r.byName[n] = append(r.byName[n], elemRef{id: id, kind: kind, name: name})
+}
+
+func refList(refs []elemRef) string {
+	parts := make([]string, len(refs))
+	for i, x := range refs {
+		parts[i] = x.String()
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
+}
+
+// resolve maps a reference (kind may be empty) to the element it means. newElement
+// skips the same-name guard: the writer explicitly wants a distinct element.
+func (r *refResolver) resolve(kind, name string, newElement bool) (string, string, error) {
+	norm := event.Normalize(name)
+	if newElement {
+		kind = orDefault(kind, "concept")
+		id := event.ElementID(kind, name)
+		r.add(id, kind, name)
+		return id, kind, nil
+	}
+	if kind != "" {
+		id := event.ElementID(kind, name)
+		if r.known[id] {
+			return id, kind, nil
+		}
+		if others := r.byName[norm]; len(others) > 0 {
+			return "", "", fmt.Errorf(
+				"%q already exists as %s — reference the existing element to continue its history, or add \"new_element\": true to an upsert_element mutation to deliberately create %s:%s as a distinct element",
+				name, refList(others), kind, name)
+		}
+		r.add(id, kind, name)
+		return id, kind, nil
+	}
+	switch others := r.byName[norm]; len(others) {
+	case 0:
+		id := event.ElementID("concept", name)
+		r.add(id, "concept", name)
+		return id, "concept", nil
+	case 1:
+		return others[0].id, others[0].kind, nil
+	default:
+		return "", "", fmt.Errorf("name %q is ambiguous — it exists as %s; reference it as \"kind:name\"", name, refList(others))
+	}
+}
+
+func (e *Engine) buildDecisionEvent(g *graph.Graph, r *refResolver, di DecisionInput, res *IngestResult) (DecisionResult, event.Event, error) {
 	if strings.TrimSpace(di.Title) == "" {
 		return DecisionResult{}, event.Event{}, fmt.Errorf("decision missing required \"title\"")
 	}
@@ -172,6 +264,16 @@ func (e *Engine) buildDecisionEvent(g *graph.Graph, di DecisionInput, res *Inges
 		Author:    orDefault(di.Author, e.S.Config.Actor),
 		Refs:      joinRefs(di.Refs),
 		Summary:   summarize(di.Mutations),
+	}
+
+	// Pre-pass: register every explicitly declared new element first, so a link or
+	// set_prop that references it resolves no matter where the upsert sits in the
+	// mutation order.
+	for _, mi := range di.Mutations {
+		if event.MutOp(mi.Op) == event.MutUpsertElement && mi.NewElement && strings.TrimSpace(mi.Name) != "" {
+			kind := orDefault(mi.Kind, "concept")
+			r.add(event.ElementID(kind, mi.Name), kind, mi.Name)
+		}
 	}
 
 	shapes := map[string]bool{}  // every element touched (provenance)
@@ -193,7 +295,7 @@ func (e *Engine) buildDecisionEvent(g *graph.Graph, di DecisionInput, res *Inges
 	for _, mi := range di.Mutations {
 		switch event.MutOp(mi.Op) {
 		case event.MutUpsertElement:
-			m, err := e.resolveMutation(mi, res)
+			m, err := e.resolveMutation(r, mi, res)
 			if err != nil {
 				return DecisionResult{}, event.Event{}, err
 			}
@@ -210,20 +312,29 @@ func (e *Engine) buildDecisionEvent(g *graph.Graph, di DecisionInput, res *Inges
 			}
 			d.Mutations = append(d.Mutations, m)
 		case event.MutSetProp:
-			id, kind, name := e.resolveElementRef(mi.Element, res)
+			id, kind, name, err := e.resolveRefGated(r, mi.Element, res)
+			if err != nil {
+				return DecisionResult{}, event.Event{}, err
+			}
 			ensureUpsert(id, kind, name)
-			m, err := e.resolveMutation(mi, res)
+			m, err := e.resolveMutation(r, mi, res)
 			if err != nil {
 				return DecisionResult{}, event.Event{}, err
 			}
 			target(m.ElementID)
 			d.Mutations = append(d.Mutations, m)
 		case event.MutAddLink, event.MutRetireLink:
-			fid, fk, fn := e.resolveElementRef(mi.From, res)
-			tid, tk, tn := e.resolveElementRef(mi.To, res)
+			fid, fk, fn, err := e.resolveRefGated(r, mi.From, res)
+			if err != nil {
+				return DecisionResult{}, event.Event{}, err
+			}
+			tid, tk, tn, err := e.resolveRefGated(r, mi.To, res)
+			if err != nil {
+				return DecisionResult{}, event.Event{}, err
+			}
 			ensureUpsert(fid, fk, fn)
 			ensureUpsert(tid, tk, tn)
-			m, err := e.resolveMutation(mi, res)
+			m, err := e.resolveMutation(r, mi, res)
 			if err != nil {
 				return DecisionResult{}, event.Event{}, err
 			}
@@ -236,7 +347,10 @@ func (e *Engine) buildDecisionEvent(g *graph.Graph, di DecisionInput, res *Inges
 	}
 	// Explicit extra authorities.
 	for _, ref := range di.SupersedesOn {
-		id, _, _ := e.resolveElementRef(ref, res)
+		id, _, _, err := e.resolveRefGated(r, ref, res)
+		if err != nil {
+			return DecisionResult{}, event.Event{}, err
+		}
 		target(id)
 	}
 
@@ -267,25 +381,36 @@ func (e *Engine) buildDecisionEvent(g *graph.Graph, di DecisionInput, res *Inges
 	return dr, ev, nil
 }
 
-func (e *Engine) resolveMutation(mi MutationInput, res *IngestResult) (event.Mutation, error) {
+func (e *Engine) resolveMutation(r *refResolver, mi MutationInput, res *IngestResult) (event.Mutation, error) {
 	switch event.MutOp(mi.Op) {
 	case event.MutUpsertElement:
 		if strings.TrimSpace(mi.Name) == "" {
 			return event.Mutation{}, fmt.Errorf("upsert_element missing \"name\"")
 		}
-		kind := orDefault(mi.Kind, "concept")
-		id := event.ElementID(kind, mi.Name)
+		id, kind, err := r.resolve(strings.TrimSpace(mi.Kind), mi.Name, mi.NewElement)
+		if err != nil {
+			return event.Mutation{}, err
+		}
 		res.Elements[mi.Name] = id
 		return event.Mutation{Op: event.MutUpsertElement, ElementID: id, Kind: kind, Name: mi.Name, Props: toStringMap(mi.Props)}, nil
 	case event.MutSetProp:
-		id, _, _ := e.resolveElementRef(mi.Element, res)
+		id, _, _, err := e.resolveRefGated(r, mi.Element, res)
+		if err != nil {
+			return event.Mutation{}, err
+		}
 		if id == "" {
 			return event.Mutation{}, fmt.Errorf("set_prop missing \"element\"")
 		}
 		return event.Mutation{Op: event.MutSetProp, ElementID: id, Key: mi.Key, Value: string(mi.Value)}, nil
 	case event.MutAddLink, event.MutRetireLink:
-		from, _, _ := e.resolveElementRef(mi.From, res)
-		to, _, _ := e.resolveElementRef(mi.To, res)
+		from, _, _, err := e.resolveRefGated(r, mi.From, res)
+		if err != nil {
+			return event.Mutation{}, err
+		}
+		to, _, _, err := e.resolveRefGated(r, mi.To, res)
+		if err != nil {
+			return event.Mutation{}, err
+		}
 		if from == "" || to == "" || strings.TrimSpace(mi.Link) == "" {
 			return event.Mutation{}, fmt.Errorf("%s requires from, to and link", mi.Op)
 		}
@@ -296,7 +421,8 @@ func (e *Engine) resolveMutation(mi MutationInput, res *IngestResult) (event.Mut
 }
 
 // resolveElementRef parses "kind:name" (or "name", default kind concept) into a
-// deterministic element id and records the resolution.
+// deterministic element id and records the resolution. Pure parsing — read commands
+// use it to address elements; ingest goes through resolveRefGated instead.
 func (e *Engine) resolveElementRef(token string, res *IngestResult) (id, kind, name string) {
 	token = strings.TrimSpace(token)
 	if token == "" {
@@ -311,6 +437,28 @@ func (e *Engine) resolveElementRef(token string, res *IngestResult) (id, kind, n
 		res.Elements[name] = id
 	}
 	return id, kind, name
+}
+
+// resolveRefGated parses a "kind:name" (or bare "name") reference and resolves it
+// through the anti-fork guard: bare names bind to the existing element of that name,
+// contradicting kinds are refused with the candidates listed.
+func (e *Engine) resolveRefGated(r *refResolver, token string, res *IngestResult) (id, kind, name string, err error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", "", "", nil
+	}
+	name = token
+	if i := strings.Index(token, ":"); i > 0 {
+		kind, name = strings.TrimSpace(token[:i]), strings.TrimSpace(token[i+1:])
+	}
+	id, kind, err = r.resolve(kind, name, false)
+	if err != nil {
+		return "", "", "", err
+	}
+	if res != nil {
+		res.Elements[name] = id
+	}
+	return id, kind, name, nil
 }
 
 func elementExists(g *graph.Graph, id string) bool {

@@ -58,6 +58,13 @@ decision(s)** — the ones currently governing it, with rationale (superseded on
 in `kg history`). If a decision constrains what you're about to do, respect it — or
 supersede it with a new decision (§2).
 
+`kg history` takes `kind:name`, a bare name, or an element id. A bare name carried by
+several elements returns `candidates` instead of guessing — re-query with one of them.
+A resolved element lists same-named elements of other kinds in `same_name` (their
+decisions live on THEIR history — check them when they look like the same thing);
+elements joined by an `ALIAS_OF` link — the repair for one thing founded twice —
+share one merged history, each decision tagged `on` with the element it landed on.
+
 **Matching is lexical (word overlap), not semantic — YOU are the semantic layer.**
 The engine matches your words against element names and decision texts
 deterministically; it cannot bridge pure synonyms. Before concluding "no record",
@@ -107,7 +114,8 @@ domain element yourself — never ask the user which element to attach.
 Mutation ops (required fields in **bold**):
 - `upsert_element` — ensure a node exists: **`kind`** (e.g. `feature`, `business`,
   `service`, `component`, `concept`) + **`name`**. Optional `props` (e.g. `paths` →
-  makes `kg context --paths` find it).
+  makes `kg context --paths` find it); optional `new_element: true` — "same name,
+  deliberately distinct element" (see identity below).
 - `add_link` / `retire_link` — **`from`**, **`to`** (element refs `kind:name`),
   **`link`** (the relationship kind, e.g. `PART_OF`, `DEPENDS_ON`, `RENDERS`).
 - `set_prop` — **`element`**, **`key`**, **`value`**.
@@ -115,9 +123,16 @@ Mutation ops (required fields in **bold**):
 How it behaves:
 - **Element identity is deterministic** (hash of kind+name, normalized to lowercase +
   collapsed spaces) — reuse the exact same `name` to refer to the same element; two
-  people converge on one node, no duplicates. But **diacritics and distinct words still
-  fork the node**: `Zürich` ≠ `Zurich`, `Invoice` ≠ `Bill`. Pick one canonical name per
-  element and reuse it. Unsure if it exists? `kg resolve "feature:Invoice"` first.
+  people converge on one node, no duplicates. The engine guards the kind side for
+  you: a bare `name` binds to the element already carrying that name (kind `concept`
+  only when the name is brand new), and an existing name under a contradicting kind
+  is **refused**, with the existing element listed — re-ingest with the existing ref,
+  or add `"new_element": true` to the upsert if you genuinely mean a distinct
+  same-named element (a facet: `concept:LakeFS` the idea vs `service:LakeFS` the
+  deployment). But **diacritics and distinct words still fork the node**: `Zürich` ≠
+  `Zurich`, `Invoice` ≠ `Bill`. Pick one canonical name per element and reuse it.
+  Unsure? `kg resolve "feature:Invoice"` shows what a ref resolves to and every
+  same-named element next to it.
 - The decision **automatically supersedes** the previous head decision(s) of every
   element it takes **authority** over → the element's history chains, and concurrent
   edits surface as a conflict (§3). Authority comes from `set_prop`, from

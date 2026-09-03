@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"kgai/internal/event"
 	"kgai/internal/graph"
 	"kgai/internal/store"
 )
@@ -92,65 +93,249 @@ type HistoryDecision struct {
 	Lamport   int64  `json:"lamport"`
 	Mutation  string `json:"mutation,omitempty"`
 	IsHead    bool   `json:"is_head"`
+	// On names the element ("kind:name") this decision actually landed on. Set only
+	// when the history merges ALIAS_OF-connected elements, so single-element output
+	// stays byte-identical to what it always was.
+	On string `json:"on,omitempty"`
+}
+
+// SameNameRef points at an element that shares a queried name — either a legitimate
+// facet (concept:LakeFS vs service:LakeFS) or an unrepaired twin. History never
+// merges these silently; it only makes them visible.
+type SameNameRef struct {
+	Ref       string `json:"ref"` // "kind:name"
+	ElementID string `json:"element_id"`
+	Decisions int    `json:"decisions"`
 }
 
 type HistoryResult struct {
 	Ok        bool              `json:"ok"`
-	ElementID string            `json:"element_id"`
-	Name      string            `json:"name"`
-	Kind      string            `json:"kind"`
-	Decisions []HistoryDecision `json:"decisions"`
+	ElementID string            `json:"element_id,omitempty"`
+	Name      string            `json:"name,omitempty"`
+	Kind      string            `json:"kind,omitempty"`
+	Decisions []HistoryDecision `json:"decisions,omitempty"`
+	// Merged lists the ALIAS_OF-connected elements whose decisions are folded in.
+	Merged []string `json:"merged,omitempty"`
+	// SameName lists elements sharing this name that are NOT merged (distinct things).
+	SameName []SameNameRef `json:"same_name,omitempty"`
+	// Candidates is set instead of Decisions when a bare name matches several
+	// elements: the caller picks one and re-queries with "kind:name".
+	Candidates []SameNameRef `json:"candidates,omitempty"`
+	Note       string        `json:"note,omitempty"`
 }
 
 // History returns the full chain of decisions that shaped an element, oldest first —
 // the on-demand evolution of that element, with the why of each change.
+// History returns the chain of decisions that shaped an element. Same-name elements
+// under other kinds are surfaced (never silently merged): a bare ambiguous name
+// returns Candidates to choose from, a resolved element lists its same-name siblings
+// in SameName. Only an explicit ALIAS_OF link (either direction) folds elements into
+// one merged history — the declared "this is the same thing, founded twice" repair.
 func (e *Engine) History(token string) (HistoryResult, error) {
 	g, err := e.openRead()
 	if err != nil {
 		return HistoryResult{}, err
 	}
 	defer g.Close()
-	eid := e.resolveElementID(g, token)
-	// Ordered by recorded_at (lamport only breaks ties): back-dated imports (an old
-	// ADR given its real `date`) must appear where they belong on the timeline, not
-	// at the moment of import. Per-element result sets are tiny, so this costs nothing.
-	rows, err := g.Raw(`MATCH (d:Decision)-[:SHAPES]->(e:Element {id:'` + esc(eid) + `'})
-		RETURN e.name AS name, e.kind AS kind, d.id AS id, d.title AS title,
-		  d.rationale AS rationale, d.author AS author, d.recorded_at AS recorded,
-		  d.lamport AS lamport, d.summary AS mutation
-		ORDER BY d.recorded_at, d.lamport`)
-	if err != nil {
-		return HistoryResult{}, err
+	all := e.allElements(g)
+
+	eid, candidates := e.historyTarget(g, token, all)
+	if len(candidates) > 1 {
+		sortSameName(candidates)
+		return HistoryResult{
+			Ok: true, Name: strings.TrimSpace(token), Candidates: candidates,
+			Note: fmt.Sprintf("name matches %d elements — pick one: kg history \"kind:name\"", len(candidates)),
+		}, nil
 	}
+
+	cluster := aliasClosure(g, eid, all) // eid first, then its ALIAS_OF closure, sorted
 	res := HistoryResult{ElementID: eid}
-	heads := map[string]bool{}
-	for _, h := range e.headDecisions(g, eid) {
-		heads[h] = true
-	}
-	for _, r := range rows {
-		res.Name, res.Kind = asStr(r["name"]), asStr(r["kind"])
-		hd := HistoryDecision{
-			ID: asStr(r["id"]), Title: asStr(r["title"]), Rationale: asStr(r["rationale"]),
-			Author: asStr(r["author"]), When: fmtTime(r["recorded"]), Lamport: asInt(r["lamport"]),
-			Mutation: asStr(r["mutation"]),
+	seen := map[string]int{} // decision id → index in res.Decisions
+	for _, member := range cluster {
+		heads := map[string]bool{}
+		for _, h := range e.headDecisions(g, member.id) {
+			heads[h] = true
 		}
-		hd.IsHead = heads[hd.ID]
-		res.Decisions = append(res.Decisions, hd)
+		// Ordered by recorded_at (lamport only breaks ties): back-dated imports (an old
+		// ADR given its real `date`) must appear where they belong on the timeline, not
+		// at the moment of import. Per-element result sets are tiny, so this costs nothing.
+		rows, err := g.Raw(`MATCH (d:Decision)-[:SHAPES]->(e:Element {id:'` + esc(member.id) + `'})
+			RETURN e.name AS name, e.kind AS kind, d.id AS id, d.title AS title,
+			  d.rationale AS rationale, d.author AS author, d.recorded_at AS recorded,
+			  d.lamport AS lamport, d.summary AS mutation
+			ORDER BY d.recorded_at, d.lamport`)
+		if err != nil {
+			return HistoryResult{}, err
+		}
+		for _, r := range rows {
+			if member.id == eid {
+				res.Name, res.Kind = asStr(r["name"]), asStr(r["kind"])
+			}
+			hd := HistoryDecision{
+				ID: asStr(r["id"]), Title: asStr(r["title"]), Rationale: asStr(r["rationale"]),
+				Author: asStr(r["author"]), When: fmtTime(r["recorded"]), Lamport: asInt(r["lamport"]),
+				Mutation: asStr(r["mutation"]),
+			}
+			hd.IsHead = heads[hd.ID]
+			if len(cluster) > 1 {
+				hd.On = member.String()
+			}
+			if i, dup := seen[hd.ID]; dup {
+				// One decision shaping two merged elements is still one decision. When
+				// it is the head on this member, report it on this member.
+				if hd.IsHead && !res.Decisions[i].IsHead {
+					res.Decisions[i].IsHead = true
+					res.Decisions[i].On = hd.On
+				}
+				continue
+			}
+			seen[hd.ID] = len(res.Decisions)
+			res.Decisions = append(res.Decisions, hd)
+		}
 	}
+	if len(cluster) > 1 {
+		// The merged history is one timeline again, not one block per element.
+		sort.SliceStable(res.Decisions, func(i, j int) bool {
+			if res.Decisions[i].When != res.Decisions[j].When {
+				return res.Decisions[i].When < res.Decisions[j].When
+			}
+			return res.Decisions[i].Lamport < res.Decisions[j].Lamport
+		})
+		for _, member := range cluster[1:] {
+			res.Merged = append(res.Merged, member.String())
+		}
+	}
+
+	// Same-name elements outside the cluster: visible, never merged.
+	name := res.Name
+	if name == "" { // element has no decisions (or doesn't exist) — use the query's name part
+		_, _, name = e.resolveElementRef(token, nil)
+	}
+	inCluster := map[string]bool{}
+	for _, m := range cluster {
+		inCluster[m.id] = true
+	}
+	for _, el := range all[event.Normalize(name)] {
+		if !inCluster[el.id] {
+			res.SameName = append(res.SameName, SameNameRef{
+				Ref: el.String(), ElementID: el.id, Decisions: e.decisionCount(g, el.id),
+			})
+		}
+	}
+	sortSameName(res.SameName)
+
 	if len(res.Decisions) == 0 {
-		return res, fmt.Errorf("no decisions touch %q (element %s)", token, eid)
+		hint := ""
+		if len(res.SameName) > 0 {
+			refs := make([]string, len(res.SameName))
+			for i, s := range res.SameName {
+				refs[i] = fmt.Sprintf("%s (%d decisions)", s.Ref, s.Decisions)
+			}
+			hint = fmt.Sprintf(" — the name exists as %s; query that ref instead", strings.Join(refs, ", "))
+		}
+		return res, fmt.Errorf("no decisions touch %q (element %s)%s", token, eid, hint)
 	}
 	res.Ok = true
 	return res, nil
 }
 
-func (e *Engine) resolveElementID(g *graph.Graph, token string) string {
-	token = strings.TrimSpace(token)
-	if rows, _ := g.Raw(`MATCH (n:Element {id:'` + esc(token) + `'}) RETURN n.id`); len(rows) > 0 {
-		return token
+// allElements loads every element, indexed by normalized name. The live graph is
+// small (hundreds of elements), so one scan per read command costs nothing.
+func (e *Engine) allElements(g *graph.Graph) map[string][]elemRef {
+	out := map[string][]elemRef{}
+	rows, _ := g.Raw(`MATCH (n:Element) RETURN n.id AS id, n.kind AS kind, n.name AS name`)
+	for _, r := range rows {
+		el := elemRef{id: asStr(r["id"]), kind: asStr(r["kind"]), name: asStr(r["name"])}
+		n := event.Normalize(el.name)
+		out[n] = append(out[n], el)
 	}
-	id, _, _ := e.resolveElementRef(token, nil)
-	return id
+	return out
+}
+
+// historyTarget resolves a history query token to one element id — or, for a bare
+// name carried by several elements, to the candidate list the caller must pick from.
+func (e *Engine) historyTarget(g *graph.Graph, token string, all map[string][]elemRef) (string, []SameNameRef) {
+	token = strings.TrimSpace(token)
+	// A raw element id that exists wins (unchanged behavior).
+	if rows, _ := g.Raw(`MATCH (n:Element {id:'` + esc(token) + `'}) RETURN n.id`); len(rows) > 0 {
+		return token, nil
+	}
+	if strings.Contains(token, ":") {
+		id, _, _ := e.resolveElementRef(token, nil)
+		return id, nil
+	}
+	matches := all[event.Normalize(token)]
+	switch len(matches) {
+	case 1:
+		return matches[0].id, nil
+	case 0:
+		id, _, _ := e.resolveElementRef(token, nil) // concept fallback, as ever
+		return id, nil
+	}
+	cands := make([]SameNameRef, len(matches))
+	for i, el := range matches {
+		cands[i] = SameNameRef{Ref: el.String(), ElementID: el.id, Decisions: e.decisionCount(g, el.id)}
+	}
+	return "", cands
+}
+
+// aliasClosure walks ALIAS_OF links (both directions, transitively) from an element:
+// the set of elements someone declared to be the same thing. The seed element comes
+// first; the rest are sorted for deterministic output.
+func aliasClosure(g *graph.Graph, eid string, all map[string][]elemRef) []elemRef {
+	byID := map[string]elemRef{}
+	for _, els := range all {
+		for _, el := range els {
+			byID[el.id] = el
+		}
+	}
+	seen := map[string]bool{eid: true}
+	queue := []string{eid}
+	var others []elemRef
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, q := range []string{
+			`MATCH (a:Element {id:'` + esc(cur) + `'})-[l:LINK]->(b:Element) WHERE l.kind = 'ALIAS_OF' RETURN b.id AS id`,
+			`MATCH (a:Element)-[l:LINK]->(b:Element {id:'` + esc(cur) + `'}) WHERE l.kind = 'ALIAS_OF' RETURN a.id AS id`,
+		} {
+			rows, _ := g.Raw(q)
+			for _, r := range rows {
+				id := asStr(r["id"])
+				if id == "" || seen[id] {
+					continue
+				}
+				seen[id] = true
+				queue = append(queue, id)
+				if el, ok := byID[id]; ok {
+					others = append(others, el)
+				}
+			}
+		}
+	}
+	sort.Slice(others, func(i, j int) bool { return others[i].String() < others[j].String() })
+	seedEl, ok := byID[eid]
+	if !ok {
+		seedEl = elemRef{id: eid}
+	}
+	return append([]elemRef{seedEl}, others...)
+}
+
+func (e *Engine) decisionCount(g *graph.Graph, eid string) int {
+	rows, _ := g.Raw(`MATCH (d:Decision)-[:SHAPES]->(e:Element {id:'` + esc(eid) + `'}) RETURN count(d) AS c`)
+	if len(rows) == 1 {
+		return int(asInt(rows[0]["c"]))
+	}
+	return 0
+}
+
+func sortSameName(refs []SameNameRef) {
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].Decisions != refs[j].Decisions {
+			return refs[i].Decisions > refs[j].Decisions
+		}
+		return refs[i].Ref < refs[j].Ref
+	})
 }
 
 // ---- context ---------------------------------------------------------------
@@ -546,10 +731,15 @@ type ResolveResult struct {
 	ElementID string   `json:"element_id"`
 	Existed   bool     `json:"existed"`
 	Heads     []string `json:"head_decisions,omitempty"`
+	// SameName lists OTHER elements carrying this name (facets or unrepaired twins) —
+	// what an ingest of a non-matching kind would refuse over.
+	SameName []SameNameRef `json:"same_name,omitempty"`
+	Note     string        `json:"note,omitempty"`
 }
 
-// ResolveName reports the deterministic element id for a (kind,name), whether it
-// already exists, and the decisions currently authoritative over it.
+// ResolveName reports the element a reference would resolve to, whether it already
+// exists, the decisions currently authoritative over it — and every other element
+// sharing the name, so a recorder can see a looming fork before ingesting.
 func (e *Engine) ResolveName(token string) (ResolveResult, error) {
 	g, err := e.openRead()
 	if err != nil {
@@ -557,11 +747,29 @@ func (e *Engine) ResolveName(token string) (ResolveResult, error) {
 	}
 	defer g.Close()
 	id, kind, name := e.resolveElementRef(token, nil)
-	existed := false
-	if rows, _ := g.Raw(`MATCH (n:Element {id:'` + esc(id) + `'}) RETURN n.id`); len(rows) > 0 {
-		existed = true
+	all := e.allElements(g)
+	// A bare name binds to the one existing element carrying it, matching what an
+	// ingest reference would do — not blindly to kind "concept".
+	if !strings.Contains(strings.TrimSpace(token), ":") {
+		if matches := all[event.Normalize(name)]; len(matches) == 1 {
+			id, kind = matches[0].id, matches[0].kind
+		}
 	}
-	return ResolveResult{Ok: true, Name: name, Kind: kind, ElementID: id, Existed: existed, Heads: e.headDecisions(g, id)}, nil
+	res := ResolveResult{Ok: true, Name: name, Kind: kind, ElementID: id}
+	if rows, _ := g.Raw(`MATCH (n:Element {id:'` + esc(id) + `'}) RETURN n.id`); len(rows) > 0 {
+		res.Existed = true
+	}
+	res.Heads = e.headDecisions(g, id)
+	for _, el := range all[event.Normalize(name)] {
+		if el.id != id {
+			res.SameName = append(res.SameName, SameNameRef{Ref: el.String(), ElementID: el.id, Decisions: e.decisionCount(g, el.id)})
+		}
+	}
+	sortSameName(res.SameName)
+	if !res.Existed && len(res.SameName) > 0 {
+		res.Note = "the name exists under other kind(s) — ingesting " + kind + ":" + name + " without \"new_element\": true will be refused"
+	}
+	return res, nil
 }
 
 // ---- canonical export ------------------------------------------------------

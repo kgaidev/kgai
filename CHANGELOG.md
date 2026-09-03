@@ -4,9 +4,26 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
-## [Unreleased]
+## [1.6.0] - 2026-09-03
 
 ### Added
+- **The engine now guards element identity against silent forks.** Writing an
+  existing name under a contradicting kind (`service:Chat` next to `feature:Chat`)
+  used to quietly mint a twin element whose decisions `kg context`/`history`/`as-of`
+  could never reach; `kg ingest` now refuses it and names both the existing element
+  and the escape hatch — `"new_element": true` on the `upsert_element` mutation, the
+  explicit way to found a same-named facet (`concept:LakeFS` vs `service:LakeFS`).
+  A bare name binds to the element already carrying it (kind `concept` only when the
+  name is brand new) and is refused as ambiguous when several elements carry it.
+  Everything is write-time input validation: the event format, stored ids and replay
+  are untouched.
+- **`kg history` makes same-named elements visible and merges declared aliases.**
+  A resolved element lists same-named elements of other kinds in `same_name` (with
+  their decision counts); a bare ambiguous name returns `candidates` to pick from
+  instead of guessing; elements joined by an `ALIAS_OF` link — the repair for one
+  thing founded twice — share one merged timeline, each decision tagged `on` with
+  the element it landed on. `kg resolve` reports `same_name` too, and warns when an
+  ingest of that ref would be refused.
 - **A VS Code extension — the project's decisions in the editor's sidebar**
   (`editors/vscode`; it installs into VS Code and the editors built on it, Cursor and
   Windsurf among them). Decisions newest first with type-ahead search and exact filters

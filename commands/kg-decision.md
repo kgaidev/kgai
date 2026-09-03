@@ -9,6 +9,9 @@ Follow the `knowledge-graph` skill. Steps:
 1. **Identify the elements involved** (domain things: features, business objects,
    services, components) and check whether they already exist:
    `kg resolve "feature:Invoice"`. Reuse exact existing names — identity is by name.
+   The engine refuses an existing name under a contradicting kind (its `same_name`
+   list shows what it would collide with); if you truly mean a distinct same-named
+   element, put `"new_element": true` on its `upsert_element` mutation.
 2. **Express the change as mutations** — what becomes true about the graph:
    `upsert_element`, `add_link` / `retire_link` (with a relationship `link` kind like
    PART_OF / DEPENDS_ON / RENDERS), `set_prop`. Set a `paths` prop on elements so

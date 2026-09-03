@@ -66,8 +66,11 @@ type DecisionInput struct {
 	Mutations    []MutationInput `json:"mutations"`
 }
 
-// MutationInput is one structural change. Element references use "kind:name" (or just
-// "name", defaulting kind to "concept"); the engine resolves them to deterministic ids.
+// MutationInput is one structural change. Element references use "kind:name" or just
+// "name"; the engine resolves them to deterministic ids against the existing graph —
+// a bare name binds to the one element already carrying it (kind "concept" only when
+// the name is new), and a kind that contradicts an existing same-named element is
+// refused unless the upsert carries `new_element` (see refResolver.resolve).
 type MutationInput struct {
 	Op string `json:"op"` // upsert_element | add_link | retire_link | set_prop
 
@@ -75,6 +78,11 @@ type MutationInput struct {
 	Kind  string                `json:"kind,omitempty"`
 	Name  string                `json:"name,omitempty"`
 	Props map[string]FlexString `json:"props,omitempty"`
+	// NewElement declares "same name, deliberately distinct element" (a facet, e.g.
+	// concept:LakeFS next to service:LakeFS). Without it, an upsert whose kind
+	// disagrees with an existing same-named element is refused instead of silently
+	// forking that element's history.
+	NewElement bool `json:"new_element,omitempty"`
 
 	// add_link / retire_link:
 	From string `json:"from,omitempty"`

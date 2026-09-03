@@ -126,7 +126,18 @@ func prettySearch(hits []engine.SearchHit) {
 }
 
 func prettyHistory(res engine.HistoryResult) {
-	fmt.Printf("%s%s:%s%s — %d decision(s), oldest first\n\n", cBold, res.Kind, res.Name, cReset, len(res.Decisions))
+	if len(res.Candidates) > 0 {
+		fmt.Printf("%s⚠ %q matches %d elements%s — pick one:\n\n", cYel, res.Name, len(res.Candidates), cReset)
+		for _, c := range res.Candidates {
+			fmt.Printf("  %s%s%s  %s%d decision(s)%s  →  kg history \"%s\"\n", cBold, c.Ref, cReset, cDim, c.Decisions, cReset, c.Ref)
+		}
+		return
+	}
+	fmt.Printf("%s%s:%s%s — %d decision(s), oldest first\n", cBold, res.Kind, res.Name, cReset, len(res.Decisions))
+	if len(res.Merged) > 0 {
+		fmt.Printf("%s  merged via ALIAS_OF: %s%s\n", cDim, strings.Join(res.Merged, ", "), cReset)
+	}
+	fmt.Println()
 	for _, d := range res.Decisions {
 		status := cDim + "superseded" + cReset
 		title := cDim + d.Title + cReset
@@ -138,7 +149,14 @@ func prettyHistory(res engine.HistoryResult) {
 		if d.Rationale != "" {
 			fmt.Printf("      %swhy:%s %s\n", cCyan, cReset, d.Rationale)
 		}
-		fmt.Printf("      %sby %s · %s%s\n\n", cDim, d.Author, shortID(d.ID), cReset)
+		on := ""
+		if d.On != "" {
+			on = " · on " + d.On
+		}
+		fmt.Printf("      %sby %s · %s%s%s\n\n", cDim, d.Author, shortID(d.ID), on, cReset)
+	}
+	for _, s := range res.SameName {
+		fmt.Printf("%s○ same name, distinct element: %s (%d decision(s)) — kg history \"%s\"%s\n", cDim, s.Ref, s.Decisions, s.Ref, cReset)
 	}
 }
 
