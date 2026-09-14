@@ -1,24 +1,23 @@
 {
-  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "kgai",
-  "displayName": "kgai — Knowledge Graph",
   "version": "1.7.0",
   "description": "Shared decision memory for AI dev teams. Your agent records the decisions behind your code — what changed, why, even the dead ends you ruled out — recalls them before changing code, and syncs them across the team without merge conflicts. Local-first, immutable, measured to 1M decisions.",
   "author": {
     "name": "kgai maintainers",
     "email": "team@kgai.dev"
   },
-  "repository": "https://github.com/kgaidev/kgai",
   "homepage": "https://kgai.dev",
+  "repository": "https://github.com/kgaidev/kgai",
   "license": "MIT",
-  "keywords": [
-    "knowledge-graph",
-    "decisions",
-    "adr",
-    "ladybugdb",
-    "kuzu",
-    "immutable",
-    "event-sourcing",
-    "memory"
-  ]
+  "extensions": {
+    "com.openai": {
+      "hooks": "./hooks/hooks.json",
+      "interface": {
+        "displayName": "kgai — Knowledge Graph",
+        "shortDescription": "The why behind the code: decisions recorded as you work, recalled before you change anything.",
+        "category": "Productivity"
+      }
+    }
+  }
 }

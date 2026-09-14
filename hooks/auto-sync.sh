@@ -9,9 +9,12 @@
 #   - another sync/write holds the store lock  → skipped (never queues)
 # Real attempts record their outcome in <store>/last-autosync.json; a persistently
 # failing sync surfaces once per session in the install status line — never louder.
+# HOME may be absent when a host does not pass its hooks the launching shell's env (Codex).
+[ -n "${HOME:-}" ] || HOME="$(getent passwd "$(id -un 2>/dev/null)" 2>/dev/null | cut -d: -f6)"
 KGAI_HOME="${KGAI_HOME:-$HOME/.kgai}"
 BIN="$KGAI_HOME/bin/kg"
-[ -x "$BIN" ] || exit 0
+[ -x "$BIN" ] || BIN="$(command -v kg 2>/dev/null)"
+[ -n "$BIN" ] && [ -x "$BIN" ] || exit 0
 export LD_LIBRARY_PATH="$KGAI_HOME/lib:${LD_LIBRARY_PATH:-}"
 export DYLD_LIBRARY_PATH="$KGAI_HOME/lib:${DYLD_LIBRARY_PATH:-}"
 # setsid is util-linux and does not exist on macOS — without the fallback the spawn failed

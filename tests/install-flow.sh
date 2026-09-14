@@ -530,13 +530,40 @@ t_system_path_files_are_sandboxed() {
 # With HOME unset (a stripped-down service environment), `set -u` used to kill the hook
 # with a bare `HOME: unbound variable` — the one message in the script that says nothing
 # about kgai and nothing about the fix.
-t_home_unset_is_reported_kindly() {
+# A host need not hand its hooks the launching shell's environment — Codex strips it, so
+# HOME can be unset when SessionStart runs install.sh. Standing down there would mean the
+# engine never installs on such a host, so install.sh derives HOME from the passwd database
+# and proceeds. A fake `getent`/`id` on PATH points that derivation at the sandbox, so the
+# test exercises the real code path without writing to the developer's actual home.
+t_home_unset_is_derived_and_install_proceeds() {
   make_release "$(host_release_os)" "$(host_release_arch)"
+  mkdir -p "$SB/fakebin"
+  printf '#!/bin/sh\ncase "$1" in passwd) echo "tester:x:1000:1000::%s:/bin/sh" ;; esac\n' "$SB" \
+    > "$SB/fakebin/getent"
+  printf '#!/bin/sh\necho tester\n' > "$SB/fakebin/id"
+  chmod +x "$SB/fakebin/getent" "$SB/fakebin/id"
   local out rc
-  out="$(env -i "PATH=/usr/local/bin:/usr/bin:/bin" "TMPDIR=$SB/tmp" \
+  out="$(env -i "PATH=$SB/fakebin:/usr/local/bin:/usr/bin:/bin" "TMPDIR=$SB/tmp" \
         "KG_RELEASE_BASE=$RELEASE_URL" \
         "$BASH_BIN" "$REPO/scripts/install.sh" 2>"$SB/home-err")"; rc=$?
-  assert_rc "an unset HOME exits cleanly" "$rc" 0
+  assert_rc "an unset-but-derivable HOME exits cleanly" "$rc" 0
+  assert_hasnt "no raw unbound-variable error" "$(cat "$SB/home-err" 2>/dev/null)" "unbound variable"
+  assert_hasnt "does not give up on the derived home" "$out" "HOME is not set"
+  # It reached the sandbox home the fake passwd named, and installed there.
+  assert_exists "engine installed under the derived home" "$SB/.kgai/bin/kg"
+}
+
+# When HOME is unset AND cannot be derived (no passwd entry), install.sh must still not
+# crash on a bare unbound-variable — it says so, kgai-branded, and stands down.
+t_home_underivable_is_reported_kindly() {
+  mkdir -p "$SB/fakebin"
+  printf '#!/bin/sh\nexit 0\n' > "$SB/fakebin/getent"   # answers nothing
+  printf '#!/bin/sh\necho tester\n' > "$SB/fakebin/id"
+  chmod +x "$SB/fakebin/getent" "$SB/fakebin/id"
+  local out rc
+  out="$(env -i "PATH=$SB/fakebin:/usr/local/bin:/usr/bin:/bin" "TMPDIR=$SB/tmp" \
+        "$BASH_BIN" "$REPO/scripts/install.sh" 2>"$SB/home-err")"; rc=$?
+  assert_rc "an underivable HOME exits cleanly" "$rc" 0
   assert_has "with a kgai-branded message" "$out" "kgai:"
   assert_has "naming the problem" "$out" "HOME is not set"
   assert_hasnt "and no raw unbound-variable error" "$(cat "$SB/home-err" 2>/dev/null)" "unbound variable"
@@ -635,7 +662,8 @@ run 'success is silent on stderr'                    t_nothing_is_written_to_std
 run 'an unrecordable fingerprint is priced out loud' t_unrecordable_fingerprint_warns
 run 'KGAI_USER_BIN at the engine dir is survivable'  t_user_bin_at_engine_dir_is_survivable
 run "the host's /etc cannot decide a flow test"      t_system_path_files_are_sandboxed
-run 'an unset HOME is reported kindly'               t_home_unset_is_reported_kindly
+run 'an unset HOME is derived, install proceeds'      t_home_unset_is_derived_and_install_proceeds
+run 'an underivable HOME is reported kindly'        t_home_underivable_is_reported_kindly
 
 section 'the by-hand install'
 run 'curl | bash installs'                           t_piped_install

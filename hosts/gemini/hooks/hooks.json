@@ -1,0 +1,57 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "name": "kgai-session-start",
+            "description": "Install the kg engine if needed, sync with the team remote in the background, and hand the model this repo's capture rules.",
+            "type": "command",
+            "command": "bash \"${extensionPath}/hooks/session-start.sh\"",
+            "timeout": 180000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "^(write_file|replace|run_shell_command)$",
+        "hooks": [
+          {
+            "name": "kgai-turn-state",
+            "description": "Note that this turn edited code, or already recorded a decision.",
+            "type": "command",
+            "command": "bash \"${extensionPath}/hooks/turn-state.sh\"",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "name": "kgai-auto-capture",
+            "description": "If the turn edited code and recorded nothing, require the capture decision before the turn ends.",
+            "type": "command",
+            "command": "bash \"${extensionPath}/hooks/auto-capture-stop.sh\"",
+            "timeout": 20000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "name": "kgai-sync",
+            "description": "Push this session's decisions to the team remote.",
+            "type": "command",
+            "command": "bash \"${extensionPath}/hooks/auto-sync.sh\"",
+            "timeout": 3000
+          }
+        ]
+      }
+    ]
+  }
+}

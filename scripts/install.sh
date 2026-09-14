@@ -11,11 +11,18 @@
 # Prints a short, AI-readable status line to stdout (SessionStart feeds it to Claude).
 set -uo pipefail
 
-# Everything below hangs off $HOME — the install home, the user bin, every profile. With
-# HOME unset, `set -u` would kill the hook with a bare `HOME: unbound variable`, the one
-# exit in this script that does not say kgai. Say it properly and stand down instead.
+# Everything below hangs off $HOME — the install home, the user bin, every profile. A host
+# does not have to hand its hooks the launching shell's environment (Codex strips it), so
+# HOME can be unset here even though the user has one. Derive it from the passwd database,
+# which needs no environment, before giving up: standing down would mean the engine never
+# installs on such a host. Only if that too finds nothing do we stand down — said properly,
+# because with HOME unset `set -u` would otherwise kill the hook on a bare unbound variable.
 if [ -z "${HOME:-}" ]; then
-  echo "kgai: ⚠️ HOME is not set — cannot locate the install home (~/.kgai). Set HOME and start a new session."
+  HOME="$(getent passwd "$(id -un 2>/dev/null)" 2>/dev/null | cut -d: -f6)"
+  export HOME
+fi
+if [ -z "${HOME:-}" ]; then
+  echo "kgai: ⚠️ HOME is not set and could not be derived — cannot locate the install home (~/.kgai). Set HOME and start a new session."
   return 0 2>/dev/null || exit 0
 fi
 
@@ -29,7 +36,14 @@ LIBDIR="$KGAI_HOME/lib"
 # on the PATH Claude Code hands its Bash tool; outside Claude Code nothing resolves.
 USER_BIN="${KGAI_USER_BIN:-$HOME/.local/bin}"
 KUZU_VERSION="${KUZU_VERSION:-0.11.2}"
-PLUGIN_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null | head -n1)"
+# The version lives in whichever manifest this package was built for — Claude Code's
+# plugin manifest, the portable one, or the Gemini CLI extension. Same key in each, so
+# the first that answers wins and a host package never reports itself as "dev".
+PLUGIN_VERSION=""
+for _manifest in .claude-plugin/plugin.json plugin.json gemini-extension.json; do
+  [ -n "$PLUGIN_VERSION" ] && break
+  PLUGIN_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/$_manifest" 2>/dev/null | head -n1)"
+done
 PLUGIN_VERSION="${PLUGIN_VERSION:-dev}"
 # Prefer prebuilt binaries from the repo's latest GitHub release (no Go/gcc needed). If a
 # platform asset is missing (e.g. before the first release), the download fails and we fall

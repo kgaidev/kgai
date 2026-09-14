@@ -28,3 +28,4 @@
 # Local build artifacts of the readers
 /src/kgread
 /src/kgview
+/dist/

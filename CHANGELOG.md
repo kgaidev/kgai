@@ -4,6 +4,40 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [1.7.0] - 2026-09-14
+
+### Added
+- **kgai now runs on Codex CLI and Gemini CLI, not only Claude Code.** The engine
+  was always just a CLI that prints JSON; what was Claude-specific was the wiring
+  around it — how the skill is discovered, what the slash commands look like, and
+  which lifecycle events fire in what shape. That wiring now exists for three hosts.
+  The hook scripts and installer are one source of truth shared verbatim;
+  `hosts/<host>/` carries only each host's manifest and event names, and
+  `scripts/build-host-pkg.sh` assembles a self-contained package per host
+  (`codex plugin marketplace add …`, `gemini extensions install …`). See
+  `hosts/README.md`.
+- **Auto-capture observes the turn as it happens, through the engine.** Whether a
+  turn edited code and whether the model already recorded a decision used to be
+  read out of Claude Code's transcript JSONL at end of turn — unportable, since
+  Codex writes an unrelated rollout format and Gemini's end-of-turn event carries
+  no transcript at all. A new engine command pair, `kg turn mark` (per tool call)
+  and `kg turn take` (at end of turn), records this in a small per-session file the
+  end-of-turn hook reads back. It also catches edits made through the shell
+  (`sed -i`, a heredoc, `git apply`), which the transcript parser never saw.
+  Claude's transcript parse remains as a fallback. Logic and tests live in
+  `internal/turn`.
+
+### Fixed
+- **Hooks no longer depend on the launching shell's environment.** Codex does not
+  pass its hooks the parent environment, so `HOME` — which `KGAI_HOME` defaults
+  through — could be unset: the hook then failed to locate the engine and silently
+  recorded nothing, and `install.sh` would stand down so the engine never installed
+  at all. Hooks and the installer now derive `HOME` from the passwd database when it
+  is unset, and fall back to the `kg` launcher on `PATH`.
+- **The "nothing to report" hook reply is `{}`, not `{"suppressOutput": true}`.**
+  Claude and Gemini honor `suppressOutput`; Codex rejects the key and marks the hook
+  failed. An empty object is accepted everywhere.
+
 ## [1.6.0] - 2026-09-03
 
 ### Added

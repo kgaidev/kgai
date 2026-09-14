@@ -15,11 +15,13 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"kgai/internal/engine"
 	"kgai/internal/store"
+	"kgai/internal/turn"
 )
 
 // version is the plugin release version, injected at build time via
@@ -66,6 +68,8 @@ func dispatch(cmd string, args []string) error {
 		return cmdAsOf(args)
 	case "conflicts":
 		return cmdConflicts(args)
+	case "turn":
+		return cmdTurn(args)
 	case "sync":
 		return cmdSync(args)
 	case "remote":
@@ -421,6 +425,62 @@ func cmdConflicts(args []string) error {
 	}
 	emit(map[string]any{"ok": true, "conflicts": conf, "count": len(conf)})
 	return nil
+}
+
+// cmdTurn is the hook-facing half of auto-capture: it records what a turn did as the turn
+// runs, and hands that back once at the end of it. The hook event payload arrives on
+// stdin, exactly as the host wrote it.
+//
+// This lives in the engine rather than in the hook scripts because the hooks run on every
+// tool call. The shell had to shell out to an interpreter to read one JSON object, which
+// cost more than starting this whole binary does — and on a machine without that
+// interpreter the hook silently did nothing at all, so decisions quietly stopped being
+// captured with no error anywhere. Neither is acceptable for the one mechanism the user
+// never invokes and therefore never sees fail.
+//
+// It touches no store and no graph: markers are small files under the kgai home, so this
+// answers in milliseconds and works in a directory that has no store at all.
+func cmdTurn(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: kg turn mark|take   (the hook event payload on stdin)")
+	}
+	payload, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return err
+	}
+	var ev turn.Event
+	// A payload that does not parse is not an error worth failing on: the hook would then
+	// report a failure to the user for an event this command simply has no opinion about.
+	_ = json.Unmarshal(payload, &ev)
+	dir := turnStateDir()
+
+	switch args[0] {
+	case "mark":
+		marks := turn.Classify(payload)
+		turn.Sweep(dir, 24*time.Hour)
+		if err := turn.Mark(dir, ev.SessionID, marks); err != nil {
+			return err
+		}
+		emit(map[string]any{"ok": true, "session": ev.SessionID, "marked": marks})
+		return nil
+	case "take":
+		m := turn.Take(dir, ev.SessionID)
+		emit(map[string]any{"ok": true, "session": ev.SessionID,
+			"edited": m.Edited, "recorded": m.Recorded, "found": m.Found})
+		return nil
+	default:
+		return fmt.Errorf("unknown turn subcommand %q (want mark or take)", args[0])
+	}
+}
+
+// Where turn markers live. Beside the engine, not inside the store: a turn is a property
+// of this session on this machine, it must never be synced to the team, and it has to
+// work in a directory where no store exists yet.
+func turnStateDir() string {
+	if v := os.Getenv("KGAI_STATE_DIR"); v != "" {
+		return v
+	}
+	return filepath.Join(store.KgaiHome(), "run")
 }
 
 func cmdSync(args []string) error {
@@ -1177,6 +1237,15 @@ READ
   resolve "<kind:name>"                               resolve an element name to its deterministic id
   query "<cypher>"                                    raw Cypher (power users)
   conflicts [--about X]                               elements shaped by >1 head decision
+
+HOOKS (called by the plugin, not by hand)
+  turn mark | take
+               what the current turn did, read from the hook event payload on stdin.
+               "mark" notes one tool call (it edited code, or it recorded a decision);
+               "take" answers {edited, recorded, found} for the turn and clears it, so
+               the end-of-turn hook knows whether to demand a capture decision. Markers
+               live beside the engine, never in the store — they are per session, per
+               machine, and are never synced
 
 ADMIN
   sync [--auto] [--cooldown SECS]
