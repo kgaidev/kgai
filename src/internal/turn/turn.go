@@ -45,7 +45,9 @@ var editTools = regexp.MustCompile(`^(Edit|Write|MultiEdit|NotebookEdit` +
 	`|apply_patch|edit_file|create_file|str_replace|update_file` +
 	`|write_file|replace)$`)
 
-var shellTools = regexp.MustCompile(`^(Bash|shell|local_shell|unified_exec|exec_command|run_shell_command)$`)
+// `exec` is Codex 0.154's shell tool (seen in a real session's rollout); the rest cover
+// older Codex builds and the other hosts.
+var shellTools = regexp.MustCompile(`^(Bash|shell|local_shell|unified_exec|exec|exec_command|run_shell_command)$`)
 
 // Codex edits through apply_patch, but it also edits through the shell — a heredoc, a
 // `sed -i`, a `git apply` — and so does Gemini. Those turns edit code just as much, and

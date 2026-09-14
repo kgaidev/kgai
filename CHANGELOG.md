@@ -4,6 +4,21 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [1.7.1] - 2026-09-14
+
+### Fixed
+- **Codex CLI now actually fires the lifecycle hooks.** 1.7.0 shipped a root
+  Agent-Plugins `plugin.json` alongside `.claude-plugin/`; Codex 0.154 responds to
+  that by loading **no** hooks at all for the plugin — so on Codex the skill worked
+  but auto-capture never ran. Confirmed against a real Codex session: a
+  `.claude-plugin`-only package fires correctly. The root manifest and `hosts/codex/`
+  are gone; Codex installs this repository directly, exactly like Claude Code, from
+  one shared `hooks/hooks.json`. A test fails if a root `plugin.json` reappears.
+- **The end-of-turn nudge reaches Codex edits.** Codex's tools are named
+  `apply_patch` (edit) and `exec` (shell); the `PostToolUse` matcher named neither,
+  so it never fired. The unified matcher names every host's tools and the engine's
+  turn classifier knows `exec`.
+
 ## [1.7.0] - 2026-09-14
 
 ### Added

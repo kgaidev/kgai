@@ -1,29 +1,21 @@
 {
+  "description": "kgai lifecycle hooks. One manifest for Claude Code AND Codex CLI — both read .claude-plugin plugins and share these event names, so the repo installs on either as-is. (Codex suppresses hooks when a root Agent-Plugins plugin.json is also present, which is why there isn't one.) Gemini CLI uses its own extension package under hosts/gemini/. SessionStart installs the engine and hands the model this repo's capture rules; PostToolUse notes what the turn did; Stop forces the capture decision and syncs; SessionEnd syncs.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/install.sh\"",
-            "timeout": 180
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/auto-sync.sh\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/inject-prompt.sh\"",
-            "timeout": 10
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"",
+            "timeout": 180,
+            "statusMessage": "kgai: preparing the decision graph"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|apply_patch|shell|local_shell|unified_exec|exec|exec_command|run_shell_command|write_file|edit_file|create_file|str_replace|update_file|replace",
         "hooks": [
           {
             "type": "command",
@@ -45,6 +37,17 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/auto-sync.sh\"",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/auto-sync.sh\"",
+            "timeout": 3
           }
         ]
       }

@@ -433,8 +433,32 @@ t_claude_manifest() {
   assert_eq "problems" "$(check_manifest "$REPO/hooks/hooks.json" "$REPO" $CLAUDE_EVENTS)" ""
 }
 
+# Codex reads the SAME hooks/hooks.json as Claude — the repo is one .claude-plugin that
+# serves both — so the unified manifest's events must be valid on Codex too.
 t_codex_manifest() {
-  assert_eq "problems" "$(check_manifest "$REPO/hosts/codex/hooks.json" "$REPO" $CODEX_EVENTS)" ""
+  assert_eq "problems" "$(check_manifest "$REPO/hooks/hooks.json" "$REPO" $CODEX_EVENTS)" ""
+}
+
+# The regression that cost hours: Codex's edit tool is `apply_patch` and its shell tool is
+# `exec` (0.154), neither of which the original Claude matcher (`Edit|Write|…|Bash`) named,
+# so PostToolUse never fired on Codex and nothing was ever marked. The unified matcher must
+# name Codex's tools.
+t_posttooluse_matcher_covers_codex_tools() {
+  local matcher
+  matcher="$(python3 -c "
+import json
+m = json.load(open('$REPO/hooks/hooks.json'))
+print(m['hooks']['PostToolUse'][0].get('matcher',''))
+")"
+  case "$matcher" in *apply_patch*) ;; *) _fail "PostToolUse matcher does not name Codex's apply_patch: [$matcher]" ;; esac
+  case "$matcher" in *exec*) ;; *) _fail "PostToolUse matcher does not name Codex's exec: [$matcher]" ;; esac
+  case "$matcher" in *Edit*) ;; *) _fail "PostToolUse matcher dropped Claude's Edit: [$matcher]" ;; esac
+}
+
+# A root Agent-Plugins plugin.json makes Codex 0.154 silently load NO hooks for the plugin
+# — the bug that made auto-capture never fire there. The repo must not carry one.
+t_no_root_plugin_json() {
+  assert_absent "no root plugin.json (it suppresses Codex hooks)" "$REPO/plugin.json"
 }
 
 t_gemini_manifest() {
@@ -455,62 +479,48 @@ print(min(h['timeout'] for gs in m['hooks'].values() for g in gs for h in g['hoo
     _fail "shortest Gemini timeout is ${lo:-none}; milliseconds means every value is >= 1000"
 }
 
-# The host packages are assembled, not committed, so the build is what has to be tested:
-# a package missing one script is a plugin that half-works on a user's machine.
-t_built_packages_are_self_contained() {
+# The Gemini package is assembled, not committed, so the build is what has to be tested:
+# a package missing one script is a plugin that half-works on a user's machine. (Codex
+# needs no built package — it installs the repo directly, like Claude.)
+t_built_gemini_package_is_self_contained() {
   if ! bash "$REPO/scripts/build-host-pkg.sh" --out "$SB/dist" >/dev/null 2>&1; then
     _fail "build-host-pkg.sh failed"
     return
   fi
-  local host
-  for host in codex gemini; do
-    assert_exists "$host hooks" "$SB/dist/$host/hooks/hooks.json"
-    assert_exists "$host skill" "$SB/dist/$host/skills/knowledge-graph/SKILL.md"
-    assert_exists "$host installer" "$SB/dist/$host/scripts/install.sh"
-    assert_eq "$host manifest problems" \
-      "$(check_manifest "$SB/dist/$host/hooks/hooks.json" "$SB/dist/$host" $CODEX_EVENTS $GEMINI_EVENTS)" ""
-  done
+  assert_exists "gemini hooks" "$SB/dist/gemini/hooks/hooks.json"
+  assert_exists "gemini skill" "$SB/dist/gemini/skills/knowledge-graph/SKILL.md"
+  assert_exists "gemini installer" "$SB/dist/gemini/scripts/install.sh"
+  assert_eq "gemini manifest problems" \
+    "$(check_manifest "$SB/dist/gemini/hooks/hooks.json" "$SB/dist/gemini" $GEMINI_EVENTS)" ""
   assert_exists "gemini manifest" "$SB/dist/gemini/gemini-extension.json"
   assert_exists "gemini commands are TOML" "$SB/dist/gemini/commands/kg-ask.toml"
   assert_exists "gemini context file" "$SB/dist/gemini/GEMINI.md"
-  assert_exists "codex manifest" "$SB/dist/codex/plugin.json"
-  assert_exists "codex commands stay Markdown" "$SB/dist/codex/commands/kg-ask.md"
 }
 
-# Every host package must claim the version the plugin actually ships, or the engine and
+# The Gemini package must claim the version the plugin actually ships, or the engine and
 # the host report two different numbers and nobody can tell which one is installed.
-t_built_packages_carry_the_version() {
+t_built_gemini_carries_the_version() {
   local v
   v="$(python3 -c "import json;print(json.load(open('$REPO/.claude-plugin/plugin.json'))['version'])")"
   bash "$REPO/scripts/build-host-pkg.sh" --out "$SB/dist" >/dev/null 2>&1
-  assert_eq "codex version" \
-    "$(python3 -c "import json;print(json.load(open('$SB/dist/codex/plugin.json'))['version'])")" "$v"
   assert_eq "gemini version" \
     "$(python3 -c "import json;print(json.load(open('$SB/dist/gemini/gemini-extension.json'))['version'])")" "$v"
 }
 
-# Three manifests now describe the same plugin — Claude Code's, the portable one Codex
-# reads at the repo root, and the Gemini extension's. A user who installs from the same
-# commit on two hosts and is told two different versions has no way to tell which one is
-# lying.
+# The Claude/Codex plugin and the Gemini extension describe the same plugin. A user who
+# installs from the same commit on two hosts and is told two different versions has no way
+# to tell which one is lying.
 t_manifests_agree() {
   local out
   out="$(python3 - "$REPO" <<'PY'
 import json, os, sys
 repo = sys.argv[1]
 claude = json.load(open(os.path.join(repo, ".claude-plugin", "plugin.json")))
-portable = json.load(open(os.path.join(repo, "plugin.json")))
 gem = json.load(open(os.path.join(repo, "hosts", "gemini", "gemini-extension.json")))
 problems = []
-for name, m in (("plugin.json", portable), ("hosts/gemini/gemini-extension.json", gem)):
-    for key in ("name", "version", "description"):
-        if m.get(key) != claude.get(key):
-            problems.append("%s disagrees with .claude-plugin/plugin.json on %r" % (name, key))
-hooks = (portable.get("extensions", {}).get("com.openai", {}) or {}).get("hooks")
-if not hooks:
-    problems.append("plugin.json does not point Codex at a hooks manifest")
-elif not os.path.exists(os.path.join(repo, hooks.lstrip("./"))):
-    problems.append("plugin.json points Codex at %s, which does not exist" % hooks)
+for key in ("name", "version", "description"):
+    if gem.get(key) != claude.get(key):
+        problems.append("gemini-extension.json disagrees with .claude-plugin/plugin.json on %r" % key)
 print("\n".join(problems))
 PY
 )"
@@ -588,13 +598,15 @@ run "envelopes are not nested"                           t_session_start_does_no
 run "nothing to say is still valid JSON"                 t_session_start_with_nothing_to_say
 
 section "E. host manifests and the built packages"
-run "the Claude Code manifest resolves"                  t_claude_manifest
-run "the Codex manifest uses Codex events"               t_codex_manifest
+run "the unified manifest resolves for Claude"           t_claude_manifest
+run "the unified manifest resolves for Codex"            t_codex_manifest
+run "PostToolUse matcher covers Codex's tools"           t_posttooluse_matcher_covers_codex_tools
+run "no root plugin.json (it suppresses Codex hooks)"    t_no_root_plugin_json
 run "the Gemini manifest uses Gemini events"             t_gemini_manifest
 run "Gemini timeouts are in milliseconds"                t_gemini_timeouts_are_milliseconds
-run "all three manifests describe the same plugin"       t_manifests_agree
-run "each built package is self-contained"               t_built_packages_are_self_contained
-run "each built package carries the version"             t_built_packages_carry_the_version
+run "the Claude/Codex and Gemini manifests agree"        t_manifests_agree
+run "the built Gemini package is self-contained"         t_built_gemini_package_is_self_contained
+run "the built Gemini package carries the version"       t_built_gemini_carries_the_version
 run "Gemini commands use Gemini's argument syntax"       t_gemini_commands_use_gemini_arguments
 run "the smoke harness actually launches its host"       t_smoke_harness_launches_its_host
 

@@ -29,6 +29,9 @@ func TestClassify(t *testing.T) {
 		{"heredoc into a file", `{"tool_name":"Bash","tool_input":{"command":"cat > src/a.js <<'JS'\nx\nJS"}}`, []string{"edit"}},
 		{"in-place sed", `{"tool_name":"run_shell_command","tool_input":{"command":"sed -i s/a/b/ src/a.js"}}`, []string{"edit"}},
 		{"git apply", `{"tool_name":"shell","tool_input":{"command":["bash","-lc","git apply /tmp/p.diff"]}}`, []string{"edit"}},
+		// Codex 0.154's shell tool is named `exec`; an in-place edit through it still counts.
+		{"codex exec sed -i", `{"tool_name":"exec","tool_input":{"command":["/bin/bash","-lc","sed -i s/a/b/ src/a.js"]}}`, []string{"edit"}},
+		{"codex exec read-only is not an edit", `{"tool_name":"exec","tool_input":{"command":["/bin/bash","-lc","sed -n 1,3p src/a.js"]}}`, nil},
 
 		{"recording a decision", `{"tool_name":"Bash","tool_input":{"command":"kg ingest < payload.json"}}`, []string{"ingest"}},
 		{"recording via the command", `{"tool_name":"Bash","tool_input":{"command":"kg-decision"}}`, []string{"ingest"}},

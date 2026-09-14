@@ -1,67 +1,48 @@
 #!/usr/bin/env bash
-# build-host-pkg.sh — assemble a self-contained kgai package for a non-Claude host.
+# build-host-pkg.sh — assemble the self-contained kgai extension package for Gemini CLI.
 #
-#   bash scripts/build-host-pkg.sh              # both, into dist/
-#   bash scripts/build-host-pkg.sh gemini       # just one
-#   bash scripts/build-host-pkg.sh codex --out /tmp/x
+#   bash scripts/build-host-pkg.sh              # → dist/gemini/
+#   bash scripts/build-host-pkg.sh --out /tmp/x
 #
-# Why a build step at all. The Claude Code plugin IS this repository — its manifest sits
-# in .claude-plugin/ and everything it needs is already at the root. The other two hosts
-# COPY the directory they are pointed at (Gemini on `extensions install`, Codex on
-# `plugin add`), so each needs its own root: its own manifest, its own hooks.json wired
-# to its own event and tool names, and its own copy of the shared scripts. Assembling
-# that here keeps one source of truth — the scripts and the skill are never duplicated in
-# git, only in the artifact.
-#
-# What is shared, and what is per host:
-#   shared   hooks/*.sh, scripts/install.sh + fetch-libs.sh, skills/, the command bodies
-#   codex    hosts/codex/plugin.json + hooks.json   (Agent Plugins manifest, Codex events)
-#   gemini   hosts/gemini/*                          (extension manifest, Gemini events,
-#                                                     commands as TOML, GEMINI.md)
+# Why only Gemini. Claude Code and Codex CLI both read `.claude-plugin` plugins and share
+# the same lifecycle event names, so THIS repository installs on either as-is
+# (`codex plugin marketplace add …` / Claude's plugin system) — no build needed, one
+# hooks/hooks.json serves both. Gemini CLI is the one that differs: a different manifest
+# (`gemini-extension.json`), commands as TOML not Markdown, a `GEMINI.md` context file,
+# and hook timeouts in milliseconds. It also COPIES the directory it is pointed at on
+# `gemini extensions install`, so it needs its own self-contained root. Assembling it here
+# keeps one source of truth — the hook scripts, installer and skill live once in the repo
+# and are copied into the artifact, never duplicated in git.
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 OUT="$REPO/dist"
-HOSTS=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    gemini|codex) HOSTS="$HOSTS $1" ;;
-    all) HOSTS="codex gemini" ;;
+    gemini) ;;   # the only host; accepted for backward compatibility
     --out) shift; OUT="${1:?--out needs a directory}" ;;
-    -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,10p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "build-host-pkg.sh: unknown argument '$1'" >&2; exit 2 ;;
   esac
   shift
 done
-[ -n "$HOSTS" ] || HOSTS="codex gemini"
 
 die() { echo "build-host-pkg.sh: $*" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || die "python3 is required to build (manifest check, command conversion)"
 
-# Every manifest in the artifact must agree with the version the plugin actually ships,
-# or a host will report one number while the engine reports another.
+# Every manifest in the artifact must claim the version the plugin actually ships, or a
+# host reports one number while the engine reports another.
 VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO/.claude-plugin/plugin.json" | head -n1)"
 [ -n "$VERSION" ] || die "could not read the version from .claude-plugin/plugin.json"
 
-copy_shared() { # <pkg dir>
-  local pkg="$1"
-  mkdir -p "$pkg/hooks" "$pkg/scripts" "$pkg/skills"
-  cp "$REPO"/hooks/*.sh "$pkg/hooks/"
-  cp "$REPO"/scripts/install.sh "$REPO"/scripts/fetch-libs.sh "$pkg/scripts/"
-  cp -R "$REPO"/skills/. "$pkg/skills/"
-  cp "$REPO/LICENSE" "$pkg/LICENSE" 2>/dev/null
-  chmod +x "$pkg"/hooks/*.sh "$pkg"/scripts/*.sh 2>/dev/null
-}
-
 # `kg-ask.md` + its `description:` frontmatter → `kg-ask.toml` with `description` and
-# `prompt`. The body is copied verbatim except for the argument placeholder, which every
-# host spells differently.
+# `prompt`. The body is copied verbatim except for the argument placeholder: Gemini
+# interpolates {{args}} where Claude/Codex spell it $ARGUMENTS.
 commands_to_toml() { # <dest dir>
-  local dest="$1"
-  mkdir -p "$dest"
-  python3 - "$REPO/commands" "$dest" <<'PY'
+  python3 - "$REPO/commands" "$1" <<'PY'
 import os, sys, re
-
 src, dest = sys.argv[1], sys.argv[2]
+os.makedirs(dest, exist_ok=True)
 written = 0
 for name in sorted(os.listdir(src)):
     if not name.endswith(".md"):
@@ -74,15 +55,10 @@ for name in sorted(os.listdir(src)):
         d = re.search(r"^description:\s*(.+?)\s*$", m.group(1), re.M)
         if d:
             desc = d.group(1)
-    # Gemini interpolates {{args}}; Claude and Codex spell the same thing $ARGUMENTS.
     body = text.replace("$ARGUMENTS", "{{args}}").strip()
-
     def toml_basic(s):
         return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-    # A multi-line basic string ends at the first `"""`, and these bodies contain shell
-    # and JSON, so the safest thing is to keep the delimiter out of the payload entirely.
-    body = body.replace('"""', '\\"\\"\\"')
+    body = body.replace('"""', '\\"\\"\\"')   # keep the delimiter out of the payload
     with open(os.path.join(dest, name[:-3] + ".toml"), "w", encoding="utf-8") as fh:
         if desc:
             fh.write("description = %s\n" % toml_basic(desc))
@@ -92,7 +68,7 @@ print(written)
 PY
 }
 
-check_json() { # <file>…
+check_json() {
   python3 - "$@" <<'PY'
 import json, sys
 for p in sys.argv[1:]:
@@ -103,30 +79,19 @@ for p in sys.argv[1:]:
 PY
 }
 
-command -v python3 >/dev/null 2>&1 || die "python3 is required to build (manifest checks, command conversion)"
+pkg="$OUT/gemini"
+rm -rf "$pkg"; mkdir -p "$pkg/hooks" "$pkg/scripts" "$pkg/skills" || die "cannot create $pkg"
+cp "$REPO"/hooks/*.sh "$pkg/hooks/"
+cp "$REPO"/scripts/install.sh "$REPO"/scripts/fetch-libs.sh "$pkg/scripts/"
+cp -R "$REPO"/skills/. "$pkg/skills/"
+cp "$REPO/LICENSE" "$pkg/LICENSE" 2>/dev/null
+chmod +x "$pkg"/hooks/*.sh "$pkg"/scripts/*.sh 2>/dev/null
 
-for host in $HOSTS; do
-  pkg="$OUT/$host"
-  rm -rf "$pkg"; mkdir -p "$pkg" || die "cannot create $pkg"
-  copy_shared "$pkg"
+sed "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$REPO/hosts/gemini/gemini-extension.json" > "$pkg/gemini-extension.json"
+cp "$REPO/hosts/gemini/GEMINI.md" "$pkg/GEMINI.md"
+cp "$REPO/hosts/gemini/hooks/hooks.json" "$pkg/hooks/hooks.json"
+n="$(commands_to_toml "$pkg/commands")" || die "converting commands to TOML failed"
+[ "${n:-0}" -gt 0 ] || die "no commands were converted — commands/ is empty?"
+check_json "$pkg/gemini-extension.json" "$pkg/hooks/hooks.json" || die "gemini manifests failed the JSON check"
 
-  case "$host" in
-    codex)
-      sed "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$REPO/hosts/codex/plugin.json" > "$pkg/plugin.json"
-      cp "$REPO/hosts/codex/hooks.json" "$pkg/hooks/hooks.json"
-      # Codex reads Markdown commands, and migrates the argument-free ones into skills.
-      mkdir -p "$pkg/commands"; cp "$REPO"/commands/*.md "$pkg/commands/"
-      check_json "$pkg/plugin.json" "$pkg/hooks/hooks.json" || die "codex manifests failed the JSON check"
-      ;;
-    gemini)
-      sed "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$REPO/hosts/gemini/gemini-extension.json" > "$pkg/gemini-extension.json"
-      cp "$REPO/hosts/gemini/GEMINI.md" "$pkg/GEMINI.md"
-      cp "$REPO/hosts/gemini/hooks/hooks.json" "$pkg/hooks/hooks.json"
-      n="$(commands_to_toml "$pkg/commands")" || die "converting commands to TOML failed"
-      [ "${n:-0}" -gt 0 ] || die "no commands were converted — commands/ is empty?"
-      check_json "$pkg/gemini-extension.json" "$pkg/hooks/hooks.json" || die "gemini manifests failed the JSON check"
-      ;;
-  esac
-
-  echo "built $host → $pkg ($VERSION)"
-done
+echo "built gemini → $pkg ($VERSION)"
