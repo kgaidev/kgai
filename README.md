@@ -96,6 +96,34 @@ check is not repeated, so wiring that breaks *later* (say, a new `.bash_profile`
 shadows the `.profile` holding the line) goes unnoticed — delete the marked line and the
 next session re-verifies from scratch.
 
+### Also on Codex CLI and Gemini CLI
+
+The same decision memory runs on two other agents. It is the same engine and the same
+capture behaviour — recall before a change, record the decision as you work, sync without
+merge conflicts — wired to each host's plugin system.
+
+**Codex CLI** (needs Codex ≥ 0.150) installs this repository directly, exactly like Claude:
+
+```bash
+codex plugin marketplace add kgaidev/kgai
+codex plugin add kgai@kgai-marketplace
+```
+
+Codex asks once to trust the plugin's hooks; until you accept, the skill and commands work
+and automatic capture does not.
+
+**Gemini CLI** installs the extension:
+
+```bash
+gemini extensions install https://github.com/kgaidev/kgai-gemini
+```
+
+A personal Google login is no longer eligible for the Gemini CLI — set a `GEMINI_API_KEY`
+from [AI Studio](https://aistudio.google.com/apikey) (its free tier is enough). Gemini asks
+before each `kg` command; allow `kg` in the workspace policy to stop the prompting.
+
+On both, the engine installs itself to `~/.kgai` on first session, same as on Claude Code.
+
 ### Install the CLI by hand
 
 To get `kg` on a machine where the plugin never ran, or to repair an installation:
@@ -442,9 +470,9 @@ already on `PATH`. Your projects' logs are separate — delete those per project
 ## Roadmap
 
 - **kgai cloud** — hosted sync plane, an interactive graph you can explore in the browser,
-  and an MCP endpoint that plugs the shared decision memory into any MCP-capable agent
-  (Cursor, Windsurf, Codex — not just Claude Code). Beta: [kgai.dev](https://kgai.dev/#cloud)
-  or team@kgai.dev.
+  and an MCP endpoint that plugs the shared decision memory into MCP-capable editors that
+  have no shell of their own (Cursor, Windsurf, the ChatGPT desktop app). Beta:
+  [kgai.dev](https://kgai.dev/#cloud) or team@kgai.dev.
 - Optional decision signing for zero-trust team remotes.
 - Contextual-search index for stores beyond ~100k decisions.
 
