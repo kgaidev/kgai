@@ -7,7 +7,7 @@
 > Team sync is opt-in (your own S3; git experimental).
 
 <p align="center">
-  <img src="docs/demo.gif" alt="kgai demo: a dev's AI records a decision, it syncs to the team, and weeks later QA's AI already knows why" width="560">
+  <img src="docs/demo.gif" alt="kgai demo: the agent rules out Redis with a reason and kgai records it; a brand-new session checks the decision log before coding and keeps the constraint" width="560">
 </p>
 <p align="center">
   <a href="https://kgai.dev">kgai.dev</a> · local-first — your code never leaves · opt-in team sync (your own S3) · zero upkeep · MIT
