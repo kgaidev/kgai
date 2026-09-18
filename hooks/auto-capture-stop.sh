@@ -69,7 +69,11 @@ try:
 except Exception:
     print("0 false"); raise SystemExit
 
-# Scope to THIS turn: the human's prompt is a user message whose content is a plain
+# No apostrophes anywhere in this program, comments included: bash 3.2 (every stock Mac)
+# scans a here-doc that sits inside $(...) for quotes, and a single unmatched one makes
+# the WHOLE hook a syntax error. tests/hooks-parse.sh holds that line.
+#
+# Scope to THIS turn: the prompt the human typed is a user message whose content is a plain
 # STRING. Everything else with type "user" (tool results, skill-injected text, reminders)
 # is a list, so it must not be mistaken for the turn boundary.
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
