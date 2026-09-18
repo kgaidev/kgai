@@ -4,6 +4,20 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [1.7.2] - 2026-09-18
+
+### Fixed
+- **The Stop hook parses on stock macOS again.** bash 3.2 (`/bin/bash` on every Mac)
+  scans a here-doc nested in `$(...)` for quotes, so a single apostrophe in a comment
+  of the embedded Python made `hooks/auto-capture-stop.sh` a syntax error — on 1.7.1
+  the hook died on every turn for every macOS user and the end-of-turn capture nudge
+  never fired. The comment is reworded (and the program must stay apostrophe-free —
+  a note in the file says why), and a new `tests/hooks-parse.sh` runs `bash -n` over
+  every shipped bash script in the macOS CI leg and the bash 3.2 container job, the
+  one place this class of failure is visible. The suite also fails loudly if its
+  globs ever stop matching any scripts, so the guard cannot silently evaporate.
+  Thanks to @vitslavicek for the report, the fix, and the test (#1).
+
 ## [1.7.1] - 2026-09-14
 
 ### Fixed

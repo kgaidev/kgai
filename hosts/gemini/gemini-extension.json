@@ -1,6 +1,6 @@
 {
   "name": "kgai",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Shared decision memory for AI dev teams. Your agent records the decisions behind your code — what changed, why, even the dead ends you ruled out — recalls them before changing code, and syncs them across the team without merge conflicts. Local-first, immutable, measured to 1M decisions.",
   "contextFileName": "GEMINI.md"
 }
