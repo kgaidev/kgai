@@ -118,3 +118,10 @@ jobs:
           CGO_ENABLED: '1'
           LD_LIBRARY_PATH: ${{ github.workspace }}/third_party/go-kuzu/lib/dynamic/linux-amd64
         run: go test ./...
+      # The only suite that EXECUTES the hooks (payloads in, output asserted, against a
+      # real engine build). Without it a logic break in a hook — including the embedded
+      # Python, which bash -n cannot see — ships green and dies silently at runtime.
+      # It lives here because this is the one job that already has go + the native lib.
+      - name: Hook contract suite
+        if: ${{ !cancelled() }}
+        run: bash tests/hooks-contract.sh
