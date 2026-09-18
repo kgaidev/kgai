@@ -36,5 +36,7 @@ for f in "$REPO"/hooks/*.sh "$REPO"/bin/* "$REPO"/scripts/*.sh; do
   check "${f#"$REPO"/} parses" "$?" "$err"
 done
 
+[ "$T" -gt 0 ] || { printf 'FAIL: no shipped bash scripts found under %s\n' "$REPO"; exit 1; }
+
 printf '\n%s passed, %s failed, %s total\n' "$PASSED" "$FAILED" "$T"
 [ "$FAILED" = 0 ] || exit 1
