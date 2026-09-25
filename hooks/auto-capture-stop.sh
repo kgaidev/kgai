@@ -127,4 +127,17 @@ dbg "BLOCK issued"
 # Kept on one line and free of double quotes and backslashes, because it is interpolated
 # straight into the JSON below. The contract suite asserts that this stays valid JSON.
 reason='Before you stop: this turn edited code. If it involved a STRUCTURAL/architectural decision about the codebase — splitting/merging/moving a module or feature, renaming a domain element (its canonical name — code-level renames of files/functions do not count), changing a dependency or ownership boundary, changing how something is exposed or rendered, or deprecating/replacing a prior decision — you MUST record it NOW via a single `kg ingest` (do NOT ask permission; use the knowledge-graph skill DO/DONT rules to decide what counts). If the turn made no such decision — a code-level rename, formatting, a bug fix, or ONLY analyses/reports/recommendations with no choice acted on — record nothing and just stop. Either record and note in one line what you captured, or stop.'
+# Claude Code labels a Stop hook `decision: block` as "Stop hook error" in red, which reads
+# as kgai crashing when it is only the nudge doing its job. additionalContext continues the
+# turn the same way (same stop_hook_active re-entry, same block cap) but is shown as "Stop
+# hook feedback". The Codex Stop output schema has no hookSpecificOutput and rejects unknown
+# keys, and Gemini documents only decision, so those two keep the block. Codex is told apart
+# by turn_id: its Stop payload always carries one, the Claude Code payload never does.
+case "$input" in
+  *'"hook_event_name":"Stop"'*|*'"hook_event_name": "Stop"'*)
+    case "$input" in
+      *'"turn_id"'*) ;;
+      *) printf '{"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": "%s"}}\n' "$reason"; exit 0 ;;
+    esac ;;
+esac
 printf '{"decision": "block", "reason": "%s"}\n' "$reason"

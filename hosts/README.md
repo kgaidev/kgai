@@ -35,10 +35,15 @@ each `kg ingest` while the turn runs, through `kg turn mark`; `hooks/auto-captur
 reads it back with `kg turn take`. Claude's transcript parse remains a fallback. Logic +
 tests in `internal/turn`.
 
-**One output shape.** All three hosts accept `{"hookSpecificOutput": {"additionalContext":
-…}}` at session start and `{"decision": "block", "reason": …}` at end of turn (Gemini
-spells it "deny", documents "block" as its alias). The "nothing to report" reply is `{}`
-— Claude and Gemini also honor `{"suppressOutput": true}` but Codex rejects that key.
+**One output shape, with one exception.** All three hosts accept `{"hookSpecificOutput":
+{"additionalContext": …}}` at session start and `{"decision": "block", "reason": …}` at
+end of turn (Gemini spells it "deny", documents "block" as its alias). The exception is
+Claude Code's end of turn: it labels a Stop block as a red "Stop hook error", so there the
+nudge goes out as `{"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
+…}}`, which continues the turn the same way and shows as "Stop hook feedback". Codex's Stop
+output schema rejects `hookSpecificOutput`; the hook tells Codex apart by the `turn_id`
+its Stop payload always carries. The "nothing to report" reply is `{}` — Claude and
+Gemini also honor `{"suppressOutput": true}` but Codex rejects that key.
 
 **Hooks don't depend on the launching shell's environment.** Codex does pass `HOME` and
 `PATH`, but strips custom vars; the hooks and `install.sh` derive `HOME` from the passwd

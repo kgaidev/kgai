@@ -223,12 +223,33 @@ t_block_when_edited_and_unrecorded() {
   fire auto-capture-stop.sh "$(stop_ev s-claude)"
   assert_rc "exit" "$RC" 0
   assert_json "stdout" "$OUT"
+  assert_eq "event" "$(json_field "$OUT" 'd["hookSpecificOutput"]["hookEventName"]')" "Stop"
+  assert_has "context names the command" "$(json_field "$OUT" 'd["hookSpecificOutput"]["additionalContext"]')" "kg ingest"
+}
+
+# Claude Code renders a Stop `decision: block` as a red "Stop hook error", so users read the
+# nudge as kgai crashing. additionalContext continues the turn identically and is shown as
+# "Stop hook feedback" — so the Claude verdict must never be a block.
+t_claude_stop_is_not_shown_as_an_error() {
+  need_engine || return 0
+  fire turn-state.sh "$CLAUDE_EDIT"
+  fire auto-capture-stop.sh "$(stop_ev s-claude)"
+  assert_eq "no decision key" "$(json_field "$OUT" '"decision" in d')" "False"
+}
+
+# Codex's Stop output schema has additionalProperties: false and no hookSpecificOutput, so
+# Codex keeps the block. Its Stop payload always carries turn_id; Claude's never does.
+t_block_on_codex_stop() {
+  need_engine || return 0
+  fire turn-state.sh "$CODEX_PATCH"
+  fire auto-capture-stop.sh '{"session_id":"s-codex","hook_event_name":"Stop","cwd":"/p","turn_id":"t1","stop_hook_active":false}'
+  assert_json "stdout" "$OUT"
   assert_eq "decision" "$(json_field "$OUT" 'd["decision"]')" "block"
-  assert_has "reason names the command" "$OUT" "kg ingest"
+  assert_eq "no hookSpecificOutput" "$(json_field "$OUT" '"hookSpecificOutput" in d')" "False"
 }
 
 # Gemini fires AfterAgent instead of Stop and spells the verdict "deny" — but documents
-# "block" as its alias, which is why one output serves all three hosts.
+# "block" as its alias, so it gets the same output as Codex.
 t_block_on_gemini_afteragent() {
   need_engine || return 0
   fire turn-state.sh "$GEMINI_WRITE"
@@ -265,7 +286,7 @@ t_continuation_marks_do_not_leak_into_the_next_turn() {
   need_engine || return 0
   fire turn-state.sh "$CLAUDE_EDIT"
   fire auto-capture-stop.sh "$(stop_ev s-claude)"
-  assert_has "the turn is blocked" "$OUT" "block"
+  assert_has "the turn is continued" "$OUT" "kg ingest"
   # …the model continues, edits once more while wrapping up, and the turn ends again.
   fire turn-state.sh "$CLAUDE_EDIT"
   fire auto-capture-stop.sh '{"session_id":"s-claude","hook_event_name":"Stop","stop_hook_active":true}'
@@ -281,7 +302,7 @@ t_marker_is_consumed() {
   need_engine || return 0
   fire turn-state.sh "$CLAUDE_EDIT"
   fire auto-capture-stop.sh "$(stop_ev s-claude)"
-  assert_has "first turn blocks" "$OUT" "block"
+  assert_has "first turn is nudged" "$OUT" "kg ingest"
   fire auto-capture-stop.sh "$(stop_ev s-claude)"
   assert_eq "second turn is silent" "$OUT" ""
 }
@@ -291,7 +312,7 @@ t_transcript_fallback_still_works() {
   printf '%s\n' '{"type":"user","message":{"content":"move invoice out of pricing"}}' > "$tp"
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/p/a.js"}}]}}' >> "$tp"
   fire auto-capture-stop.sh "{\"session_id\":\"s-old\",\"hook_event_name\":\"Stop\",\"transcript_path\":\"$tp\"}"
-  assert_eq "decision" "$(json_field "$OUT" 'd["decision"]')" "block"
+  assert_has "nudged" "$(json_field "$OUT" 'd["hookSpecificOutput"]["additionalContext"]')" "kg ingest"
 }
 
 # Codex writes a rollout log with a completely different shape. The fallback must read it
@@ -576,7 +597,9 @@ run "sessions do not bleed into each other"              t_sessions_are_separate
 run "an unwritable state dir never breaks the tool call" t_unwritable_state_dir_is_survivable
 
 section "B. auto-capture-stop.sh — the end-of-turn decision"
-run "edited and unrecorded → the turn is blocked"        t_block_when_edited_and_unrecorded
+run "edited and unrecorded → the turn is continued"      t_block_when_edited_and_unrecorded
+run "Claude never sees the nudge as a Stop hook error"   t_claude_stop_is_not_shown_as_an_error
+run "Codex Stop (turn_id) still gets decision: block"    t_block_on_codex_stop
 run "Gemini AfterAgent gets the same verdict"            t_block_on_gemini_afteragent
 run "already recorded → the turn ends silently"          t_silent_when_already_recorded
 run "no edits → the turn ends silently"                  t_silent_when_nothing_was_edited

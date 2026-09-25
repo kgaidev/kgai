@@ -4,6 +4,16 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Changed
+- **The end-of-turn capture nudge no longer shows up as an error in Claude Code.**
+  Claude Code labels a Stop hook `decision: block` as a red "Stop hook error", so the
+  nudge looked like kgai crashing. On Claude Code it is now sent as
+  `hookSpecificOutput.additionalContext`, which continues the turn exactly the same
+  way and is shown as "Stop hook feedback". Codex (whose Stop schema rejects that
+  key) and Gemini keep `decision: block`.
+
 ## [1.7.2] - 2026-09-18
 
 ### Fixed
