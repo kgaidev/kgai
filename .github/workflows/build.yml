@@ -64,6 +64,10 @@ jobs:
             arch: arm64
             libdir: darwin
     runs-on: ${{ matrix.runner }}
+    env:
+      # Apple clang's minimum macOS for the cgo link; ignored off darwin. See the
+      # "Darwin binaries run on macOS 12" step for why it is pinned.
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
