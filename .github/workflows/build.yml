@@ -59,7 +59,7 @@ jobs:
             os: linux
             arch: aarch64
             libdir: linux-arm64
-          - runner: macos-14
+          - runner: macos-15
             os: darwin
             arch: arm64
             libdir: darwin
@@ -105,6 +105,20 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           go build -ldflags="-X main.version=$VERSION -extldflags '-Wl,-rpath,@loader_path/../lib'" -o kg-x86_64 .
+
+      # Apple clang stamps the runner's own macOS as the minimum unless told otherwise:
+      # v1.7.3, built on macos-14, refused to start on macOS 13. Pin what users need
+      # (Go 1.25's own floor is macOS 12), not whatever image GitHub hosts this year.
+      - name: Darwin binaries run on macOS 12
+        if: matrix.os == 'darwin'
+        run: |
+          fail=0
+          for f in src/kg src/kg-x86_64; do
+            minos="$(otool -l "$f" | awk '/LC_BUILD_VERSION/{b=1} b&&$1=="minos"{print $2; exit}')"
+            echo "$f: minos $minos"
+            [ "$minos" = "12.0" ] || { echo "::error::$f requires macOS $minos, expected 12.0"; fail=1; }
+          done
+          exit $fail
 
       - name: Smoke test
         run: |
