@@ -1,0 +1,32 @@
+{
+  "name": "kgai-mod",
+  "version": "0.1.0",
+  "description": "Experimental kgai add-on for Claude Code with function hooks: checks each code-editing turn for a structural decision on the side, records it without a line in the transcript, and draws kgai's own tool calls as one line each. Requires the kgai plugin.",
+  "author": {
+    "name": "kgai maintainers",
+    "email": "team@kgai.dev"
+  },
+  "repository": "https://github.com/kgaidev/kgai",
+  "homepage": "https://kgai.dev",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "capture": {
+      "type": "string",
+      "title": "Decision capture",
+      "description": "auto: record a structural decision silently at the end of a turn. confirm: show it above the prompt with Record / Skip. off: do nothing (the classic kgai nudge stays on).",
+      "options": [
+        "auto",
+        "confirm",
+        "off"
+      ],
+      "default": "auto"
+    },
+    "compact": {
+      "type": "boolean",
+      "title": "Compact kgai rows",
+      "description": "Draw kgai's own tool calls (kg search, kg ingest, the kgai skills) as one line each instead of the command and its JSON. Errors always show in full.",
+      "default": true
+    }
+  }
+}

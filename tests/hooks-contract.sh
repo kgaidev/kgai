@@ -578,6 +578,15 @@ t_gemini_commands_use_gemini_arguments() {
   assert_file_has "description survives the frontmatter" "$SB/dist/gemini/commands/kg-ask.toml" "description ="
 }
 
+# kgai-mod takes the capture nudge out of the classic Stop result by its opening words.
+# Reword the nudge without the mod and the mod stops suppressing it, with no error anywhere.
+t_mod_knows_the_nudge() {
+  local prefix
+  prefix="$(sed -n "s/^export const CLASSIC_NUDGE_PREFIX = '\(.*\)'$/\1/p" "$REPO/mods/kgai-mod/hooks/register.tsx")"
+  assert_has "the mod names a prefix" "$prefix" "Before you stop"
+  assert_file_has "auto-capture-stop.sh opens its nudge with it" "$REPO/hooks/auto-capture-stop.sh" "reason='$prefix"
+}
+
 # ======================================================================================
 
 suite_header "hooks-contract"
@@ -632,5 +641,6 @@ run "the built Gemini package is self-contained"         t_built_gemini_package_
 run "the built Gemini package carries the version"       t_built_gemini_carries_the_version
 run "Gemini commands use Gemini's argument syntax"       t_gemini_commands_use_gemini_arguments
 run "the smoke harness actually launches its host"       t_smoke_harness_launches_its_host
+run "kgai-mod matches the classic capture nudge"         t_mod_knows_the_nudge
 
 summary

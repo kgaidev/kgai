@@ -202,6 +202,61 @@ In headless testing this held up across models: structural refactors auto-record
 when the model was blocked from recording on its own, the hook still captured every time;
 trivial edits recorded nothing even when nudged.
 
+### Experimental: kgai-mod (Claude Code Mods)
+
+The `Stop` hook works by continuing the turn, so after every turn that edited code the
+model answers it in the transcript, usually with a line like "No structural decision,
+nothing to record." **kgai-mod** is an optional second plugin for Claude Code builds with
+function hooks (Claude Code Mods, early access) that asks the same question on the side.
+When the turn ends, it forks the session as a tool-less side question. That fork reuses
+the session's prompt cache and adds no row to the transcript. The fork answers with a
+`kg ingest` payload or `NONE`, and the mod validates the payload with
+`kg ingest --dry-run` and then records it. You see something only when a decision was
+recorded: a status line `kgai: recorded "<title>"` for a few seconds. A failed check stays
+out of the transcript. It goes to the debug log, and you get at most one toast per session.
+
+```
+/plugin install kgai-mod@kgai-marketplace
+```
+
+It also shortens kgai's own tool calls in the transcript. Each `kg search`, `kg context`,
+`kg ingest`, `kg sync` and kgai skill call shows as one dim line, such as
+`kgai: reading the graph` or `kgai: recorded "Invoice renders standalone"`, instead of the
+command, its JSON payload and the engine's JSON answer. Only the drawing changes: the
+model and the stored transcript still have everything. A call that fails shows in full,
+and so do `kg init`, `kg config` and the `kg-trust` skill.
+
+It needs the `kgai` plugin installed as well, because that plugin still installs the
+engine and ships the skills. With the mod active, the mod takes the kgai `Stop` hook's
+capture instruction out of the hook result, so the turn is not continued. Both kgai `Stop`
+commands still run, so team sync is unchanged. Uninstall the mod
+(`/plugin uninstall kgai-mod@kgai-marketplace`) and the classic nudge is back. Nothing
+changes for anyone who does not install it, and Codex, Gemini CLI and Claude Code builds
+without function hooks keep using the classic hooks.
+
+The `capture` option (in `/config`, or `pluginConfigs` in settings) picks what it does:
+
+| `capture` | What happens at the end of a turn that edited code |
+|---|---|
+| `auto` (default) | records a structural decision silently and shows the status line |
+| `confirm` | shows the decision above the prompt with **Record** / **Skip**; the band goes away with the next prompt |
+| `off` | nothing, and the classic nudge stays on |
+
+The `compact` option (default on) controls the one-line kgai rows. Turn it off to see
+every kg command and its output in full.
+
+Surfaces: the status line, toast and band work in the terminal and the desktop app's Code
+tab. In this Claude Code build the band above the prompt is drawn only on those two
+surfaces, so `confirm` records as `auto` does in sessions that draw on neither, such as
+the VS Code extension alone or a headless session (`claude -p`, the SDK, custom
+stream-json hosts). A headless session also gets the result as one `ui_log` line,
+`kgai: recorded …`, which the host can show.
+
+The mod's API is early access and may change between Claude Code releases, so treat
+kgai-mod as experimental. Its source and tests are in [mods/kgai-mod](mods/kgai-mod/).
+To try a local checkout, run `claude --plugin-dir mods/kgai-mod` with the `kgai` plugin
+installed. `claude plugin test mods/kgai-mod` runs its tests.
+
 ### See it in your editor
 
 The **kgai extension for VS Code** (and the editors built on it — Cursor, Windsurf)
@@ -459,6 +514,16 @@ plugin update reinstalls the engine at the next session start. Before v1.4.0 tha
 fingerprint was computed with a tool macOS doesn't ship, came out empty, and every Mac
 kept whatever engine it first downloaded. Such an installation repairs itself once v1.4.0
 runs; nothing to do by hand.
+
+**Can I hide kgai's output in the chat, above and below the reply?**
+Yes, in Claude Code, with the optional
+[kgai-mod](#experimental-kgai-mod-claude-code-mods) plugin
+(`/plugin install kgai-mod@kgai-marketplace`). It shows each kgai call (`kg search`,
+`kg ingest`, the kgai skills) as one line, such as `kgai: recorded "…"`, instead of the
+command and its JSON above the reply. It also runs the end-of-turn capture check on the
+side, so no "nothing to record" line follows the reply. It needs a Claude Code build with
+function hooks and is experimental. Without it, kgai behaves as before: the plugin itself
+has no setting that hides this output. Codex CLI and Gemini CLI have no equivalent.
 
 **Where does it all live, and how do I remove it?**
 The engine and native lib in `~/.kgai` (override with `KGAI_HOME`), the `kg` launcher in

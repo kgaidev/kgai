@@ -4,6 +4,25 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Added
+- **kgai-mod 0.1.0 (experimental, opt-in):** a second plugin in the marketplace for
+  Claude Code builds with function hooks (Claude Code Mods). It runs the end-of-turn
+  capture check on the side. The check is a tool-less fork of the session that proposes
+  a `kg ingest` payload or `NONE`, so the turn no longer ends with a visible "nothing to
+  record" line. A recorded decision shows as a short status line, and `capture: confirm`
+  asks with **Record** / **Skip** above the prompt instead. The mod also draws kgai's
+  own tool calls (`kg search`, `kg ingest`, the kgai skills) as one dim line each, such
+  as `kgai: recorded "…"`, instead of the command and its JSON; the `compact` option
+  turns that off. While the mod is active, it takes the kgai `Stop` hook's capture
+  instruction out of the hook result, and team sync still runs. It requires the `kgai`
+  plugin. The `kgai` plugin and its hooks are unchanged, and `tests/hooks-contract.sh`
+  now checks that the mod still recognizes the nudge text.
+- **Help for quieter chat output:** a README FAQ entry and a note in the
+  knowledge-graph skill answer "how do I hide kgai's output above and below the reply"
+  by pointing to kgai-mod. The note is text only and changes no behavior.
+
 ## [1.7.3] - 2026-09-25
 
 ### Changed

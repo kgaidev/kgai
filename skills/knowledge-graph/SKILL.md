@@ -178,3 +178,13 @@ recorded_at, lamport)`. Rels: `LINK(kind, created_by)` Element→Element (curren
 governs that element), `SUPERSEDES` Decision→Decision (evolution). A decision is a
 **head** for an element if it SHAPES it with authority and no later authority decision
 on that element supersedes it.
+
+## Quieter chat output (Claude Code only)
+If the user asks how to hide or shorten kgai's lines in the chat (the `kg` commands and
+their JSON above a reply, or the end-of-turn "nothing to record" line after it), point
+them to the optional **kgai-mod** plugin: `/plugin install kgai-mod@kgai-marketplace`.
+It needs a Claude Code build with function hooks (Claude Code Mods, early access) and
+this plugin installed too. It shows each kgai call as one line and runs the end-of-turn
+capture check off the transcript. Its `compact` and `capture` options are in `/config`,
+and uninstalling it restores the default. Let the user install it; don't install it
+yourself. Codex CLI and Gemini CLI have no equivalent.

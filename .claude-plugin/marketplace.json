@@ -14,6 +14,11 @@
       "name": "kgai",
       "source": "./",
       "description": "Shared decision memory for AI dev teams — your AI records the why behind the code, recalls it before changes, and syncs it without merge conflicts."
+    },
+    {
+      "name": "kgai-mod",
+      "source": "./mods/kgai-mod",
+      "description": "Experimental, opt-in. Requires Claude Code with function hooks (Claude Code Mods) and the kgai plugin. Runs the end-of-turn decision capture on the side, so the transcript stays clean unless a decision is actually recorded."
     }
   ]
 }
