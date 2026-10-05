@@ -4,7 +4,14 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
-## [Unreleased]
+## [1.7.4] - 2026-10-05
+
+### Fixed
+- **`kg` starts on macOS 12 and 13 again.** The v1.7.3 darwin binaries were built on a
+  macOS 14 runner and inherited its minimum version, so they refused to start on older
+  macOS. The darwin builds now target macOS 12 (Go's own floor), and CI checks the
+  minimum macOS of every darwin binary, so this cannot regress unnoticed. CI also moves
+  off the macos-14 runners, which GitHub retires on 2 November 2026.
 
 ### Added
 - **kgai-mod 0.1.0 (experimental, opt-in):** a second plugin in the marketplace for
