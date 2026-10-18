@@ -112,7 +112,8 @@ jobs:
 
       # Apple clang stamps the runner's own macOS as the minimum unless told otherwise:
       # v1.7.3, built on macos-14, refused to start on macOS 13. Pin what users need
-      # (Go 1.25's own floor is macOS 12), not whatever image GitHub hosts this year.
+      # (Go 1.26's own floor is macOS 12, and the last one with it), not whatever
+      # image GitHub hosts this year.
       - name: Darwin binaries run on macOS 12
         if: matrix.os == 'darwin'
         run: |
