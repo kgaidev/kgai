@@ -4,6 +4,15 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [1.7.5] - 2026-10-18
+
+### Security
+- **Go 1.26.9.** `kg` is now built with Go 1.26.9, which fixes nine standard-library
+  vulnerabilities in code `kg` actually reaches (`net/http` including HTTP/2,
+  `crypto/tls`, `mime/multipart`; GO-2026-6603 to GO-2026-6617). They sit on the sync
+  paths (S3 and kgai cloud). Go 1.25 is out of support, so no 1.25 fix exists. Nothing
+  changes for macOS: Go 1.26 still runs on macOS 12.
+
 ## [1.7.4] - 2026-10-05
 
 ### Fixed
