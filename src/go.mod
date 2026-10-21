@@ -1,6 +1,6 @@
 module kgai
 
-go 1.26.9
+go 1.26.10
 
 require github.com/kuzudb/go-kuzu v0.11.2
 
