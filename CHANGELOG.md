@@ -4,6 +4,14 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [1.7.6] - 2026-10-21
+
+### Security
+- **Go 1.26.10.** `kg` is now built with Go 1.26.10, which fixes GO-2026-6809 in
+  `crypto/x509`: certificate verification now distrusts compromised intermediate
+  certificates. `kg` reaches it through TLS on the sync paths (S3 and kgai cloud).
+  Nothing changes for macOS: Go 1.26 still runs on macOS 12.
+
 ## [1.7.5] - 2026-10-18
 
 ### Security
