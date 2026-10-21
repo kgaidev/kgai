@@ -117,6 +117,58 @@ func TestContextAboutMatchesDecisionText(t *testing.T) {
 	}
 }
 
+// Agents pass whole task descriptions, not keywords. Words the store never used must
+// not dilute a real hit below the relevance threshold: before, this task surfaced
+// Refunds but lost Subscription — the agent then missed the decision it must respect.
+// A query made only of words the store has never seen must still return nothing.
+func TestContextAboutLongTaskKeepsEveryNamedElement(t *testing.T) {
+	s, err := store.Init(t.TempDir()+"/store", "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(s)
+
+	if _, err := e.Ingest(IngestInput{Decisions: []DecisionInput{{
+		Title:     "Refunds go back to the original payment method only",
+		Rationale: "Store credit confused support.",
+		Mutations: []MutationInput{{Op: "upsert_element", Kind: "feature", Name: "Refunds"}},
+	}, {
+		Title:     "Subscriptions are a feature built on Orders",
+		Rationale: "Renewals reuse the order pipeline.",
+		Mutations: []MutationInput{{Op: "upsert_element", Kind: "feature", Name: "Subscription"}},
+	}, {
+		Title:     "Search runs on Meilisearch",
+		Rationale: "Algolia was too costly at our volume.",
+		Mutations: []MutationInput{{Op: "upsert_element", Kind: "service", Name: "Search Index"}},
+	}}}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := e.Context(ContextQuery{Max: 5, About: "Implement partial refunds for subscriptions: when a customer " +
+		"cancels mid-cycle, refund the unused part to their card and update the state accordingly"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, it := range res.Items {
+		got[it.Name] = true
+	}
+	if !got["Refunds"] || !got["Subscription"] {
+		t.Fatalf("a long task must surface every element it names, got %+v", res.Items)
+	}
+	if got["Search Index"] {
+		t.Fatalf("an element the task does not mention must stay out, got %+v", res.Items)
+	}
+
+	none, err := e.Context(ContextQuery{Max: 5, About: "helm chart for the kubernetes ingress"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none.Items) != 0 {
+		t.Fatalf("words the store never used must match nothing, got %+v", none.Items)
+	}
+}
+
 // The head decisions are fetched only for the elements that survive ranking and
 // truncation, so this guards the two things that decoupling can break: every item
 // must carry ITS OWN decisions (not a neighbour's), and the recency tiebreak — now

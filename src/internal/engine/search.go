@@ -210,7 +210,8 @@ func elementDoc(id, kind, name, props string, extra string) searchDoc {
 
 // fieldsScore sums, per query token, the best (field weight × match strength) hit
 // across the given fields — the shared core of the about-relevance scores below.
-func fieldsScore(qToks []string, fields []searchField) float64 {
+// When matched is non-nil, every query token that hit anything is recorded in it.
+func fieldsScore(qToks []string, fields []searchField, matched map[string]bool) float64 {
 	total := 0.0
 	for _, q := range qToks {
 		best := 0.0
@@ -220,6 +221,9 @@ func fieldsScore(qToks []string, fields []searchField) float64 {
 					best = s
 				}
 			}
+		}
+		if best > 0 && matched != nil {
+			matched[q] = true
 		}
 		total += best
 	}
@@ -233,20 +237,18 @@ func aboutScore(query, kind, name, props string) float64 {
 	if len(qToks) == 0 {
 		return 0
 	}
-	fields := []searchField{{3.0, tokenize(name)}, {2.0, tokenize(kind)}, {1.0, tokenize(props)}}
-	return fieldsScore(qToks, fields) / (3.0 * float64(len(qToks)))
+	return fieldsScore(qToks, elementAboutFields(kind, name, props), nil) / (3.0 * float64(len(qToks)))
 }
 
-// decisionAboutScore ranks one decision's text against free text, so a question
+// elementAboutFields is the scorable view of an element for `kg context --about`.
+func elementAboutFields(kind, name, props string) []searchField {
+	return []searchField{{3.0, tokenize(name)}, {2.0, tokenize(kind)}, {1.0, tokenize(props)}}
+}
+
+// decisionAboutFields is the scorable view of one decision's text, so a question
 // phrased in the words of what was DECIDED — "should I hide drafts", not the
 // element name "Invoice" — still surfaces the element that decision shaped.
-// Same weights as the decision documents in Search (title over body), same 0..1-ish
-// normalization as aboutScore. qToks is pre-tokenized: the caller scores every
-// decision in the store against one query.
-func decisionAboutScore(qToks []string, title, body string) float64 {
-	if len(qToks) == 0 {
-		return 0
-	}
-	fields := []searchField{{3.0, tokenize(title)}, {1.0, tokenize(body)}}
-	return fieldsScore(qToks, fields) / (3.0 * float64(len(qToks)))
+// Same weights as the decision documents in Search (title over body).
+func decisionAboutFields(title, body string) []searchField {
+	return []searchField{{3.0, tokenize(title)}, {1.0, tokenize(body)}}
 }

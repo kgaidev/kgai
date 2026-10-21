@@ -422,15 +422,18 @@ func (e *Engine) Context(q ContextQuery) (ContextResult, error) {
 	// such a question is about — and give each element its best decision's score.
 	// Costs one scan of the decision texts, so it runs only for --about queries.
 	decBoost := map[string]float64{}
+	elAbout := map[string]float64{}
+	aboutNorm := 0.0
 	if q.About != "" {
 		qToks := tokenize(q.About)
+		matched := map[string]bool{}
 		// ALL shaping decisions feed the boost — provenance-only ones included: a
 		// recorded dead end is exactly what such a question tends to be about.
 		dr, _ := g.Raw(`MATCH (d:Decision)-[:SHAPES]->(el:Element)
 			WITH d, collect(el.id) AS eids
 			RETURN d.title AS title, d.rationale AS rationale, d.summary AS summary, eids`)
 		for _, r := range dr {
-			sc := decisionAboutScore(qToks, asStr(r["title"]), asStr(r["rationale"])+" "+asStr(r["summary"]))
+			sc := fieldsScore(qToks, decisionAboutFields(asStr(r["title"]), asStr(r["rationale"])+" "+asStr(r["summary"])), matched)
 			if sc <= 0 {
 				continue
 			}
@@ -439,6 +442,24 @@ func (e *Engine) Context(q ContextQuery) (ContextResult, error) {
 					decBoost[eid] = sc
 				}
 			}
+		}
+		for _, r := range elems {
+			elAbout[asStr(r["id"])] = fieldsScore(qToks, elementAboutFields(asStr(r["kind"]), asStr(r["name"]), asStr(r["props"])), matched)
+		}
+		// Normalize by the query words the store knows, not by the query length. Agents
+		// pass whole task descriptions ("implement partial refunds for subscriptions:
+		// when a customer cancels mid-cycle…"); words no element or decision ever used
+		// carry no signal, and counting them diluted real hits below the relevance
+		// threshold — the second element such a task names got dropped.
+		// Repeated words count every time, as they do in the scores themselves.
+		known := 0
+		for _, t := range qToks {
+			if matched[t] {
+				known++
+			}
+		}
+		if known > 0 {
+			aboutNorm = 1 / (3.0 * float64(known))
 		}
 	}
 
@@ -462,10 +483,10 @@ func (e *Engine) Context(q ContextQuery) (ContextResult, error) {
 		if q.About != "" {
 			// Free-text relevance (see search.go) — "billing invoices" matches the
 			// Invoice element without containing the literal word.
-			score += 6 * aboutScore(q.About, it.Kind, it.Name, asStr(r["props"]))
+			score += 6 * elAbout[eid] * aboutNorm
 			// Slightly below the direct-name weight: naming the element stays the
 			// strongest signal, matching the words of its decisions comes second.
-			score += 5 * decBoost[eid]
+			score += 5 * decBoost[eid] * aboutNorm
 		}
 		score += 0.001 * float64(maxLam[eid]) // recency tiebreak
 		if filtered && score < 1 {
