@@ -39,7 +39,28 @@ type Engine struct {
 
 func New(s *store.Store) *Engine { return &Engine{S: s} }
 
+// openWrite opens the projection for writing; the caller holds the store lock. A
+// projection that does not exist yet over a log that does — a copied or freshly cloned
+// store, a deleted graph.kuzu — is built from the whole log first. Opening it empty
+// made every read answer "nothing recorded" and every later write project only itself.
 func (e *Engine) openWrite() (*graph.Graph, error) {
+	fresh := !e.graphExists()
+	g, err := e.openWriteRaw()
+	if err != nil {
+		return nil, err
+	}
+	if fresh {
+		if _, err := e.replay(g, true); err != nil {
+			g.Close()
+			return nil, err
+		}
+	}
+	return g, nil
+}
+
+// openWriteRaw opens (creating if needed) the projection without replaying anything —
+// for rebuildLocked, which replays itself.
+func (e *Engine) openWriteRaw() (*graph.Graph, error) {
 	g, err := graph.Open(e.S.GraphPath(), false)
 	if err != nil {
 		return nil, err
@@ -51,17 +72,29 @@ func (e *Engine) openWrite() (*graph.Graph, error) {
 	return g, nil
 }
 
+func (e *Engine) graphExists() bool {
+	_, err := os.Stat(e.S.GraphPath())
+	return err == nil
+}
+
 // openRead opens the projection READ-ONLY so read commands can neither mutate the
 // cache (a stray `kg query "… DELETE …"`) nor collide with the single writer. If the
-// graph doesn't exist yet, it is built once (write-open + schema) and then reopened RO.
+// graph doesn't exist yet, it is built once from the log — under the store lock, so a
+// concurrent writer cannot build it too — and then reopened RO.
 func (e *Engine) openRead() (*graph.Graph, error) {
 	g, err := graph.Open(e.S.GraphPath(), true)
 	if err != nil {
+		if lerr := e.S.Lock(); lerr != nil {
+			return nil, lerr
+		}
 		wg, werr := e.openWrite()
+		if werr == nil {
+			wg.Close()
+		}
+		e.S.Unlock()
 		if werr != nil {
 			return nil, werr
 		}
-		wg.Close()
 		return graph.Open(e.S.GraphPath(), true)
 	}
 	return g, nil
@@ -500,7 +533,7 @@ func (e *Engine) rebuildLocked() (int, error) {
 	if err := removeAll(e.S.GraphPath()); err != nil {
 		return 0, err
 	}
-	g, err := e.openWrite()
+	g, err := e.openWriteRaw()
 	if err != nil {
 		return 0, err
 	}

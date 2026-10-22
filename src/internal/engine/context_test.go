@@ -350,6 +350,51 @@ func TestContextJSONCarriesContentNotBookkeeping(t *testing.T) {
 	}
 }
 
+// A log without its projection — a copied or freshly cloned store, a deleted
+// graph.kuzu — must answer from the whole log. Before, the first open created an empty
+// projection: reads said "nothing recorded" and the next write projected only itself.
+func TestMissingProjectionIsBuiltFromTheLog(t *testing.T) {
+	for _, first := range []string{"read", "write"} {
+		t.Run(first, func(t *testing.T) {
+			root := t.TempDir() + "/store"
+			s, err := store.Init(root, "test", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := New(s).Ingest(IngestInput{Decisions: []DecisionInput{
+				{Title: "Invoice is a feature", Mutations: []MutationInput{{Op: "upsert_element", Kind: "feature", Name: "Invoice"}}},
+				{Title: "Billing is a service", Mutations: []MutationInput{{Op: "upsert_element", Kind: "service", Name: "Billing"}}},
+			}}, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.RemoveAll(s.GraphPath()); err != nil {
+				t.Fatal(err)
+			}
+
+			s2, err := store.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e := New(s2)
+			want := 2
+			if first == "write" {
+				if _, err := e.Ingest(IngestInput{Decision: &DecisionInput{Title: "Cart is a feature",
+					Mutations: []MutationInput{{Op: "upsert_element", Kind: "feature", Name: "Cart"}}}}, false); err != nil {
+					t.Fatal(err)
+				}
+				want = 3
+			}
+			rows, err := e.Query(`MATCH (d:Decision) RETURN count(d) AS n`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := asInt(rows[0]["n"]); n != int64(want) {
+				t.Fatalf("projection must hold the whole log after a %s-first open: %d decisions, want %d", first, n, want)
+			}
+		})
+	}
+}
+
 // The head decisions are fetched only for the elements that survive ranking and
 // truncation, so this guards the two things that decoupling can break: every item
 // must carry ITS OWN decisions (not a neighbour's), and the recency tiebreak — now

@@ -25,6 +25,10 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 - **`kg context --about` keeps every element a long task names.** Words no element or
   decision ever used no longer dilute a real hit below the relevance threshold.
 - A cut rationale no longer splits a multi-byte character (invalid UTF-8 in JSON).
+- **A store without its graph projection is built from its log on first use.** A
+  copied or freshly cloned store, or one whose `graph.kuzu` was deleted, opened an
+  empty projection: reads answered "nothing recorded" and the next write projected only
+  itself. `kg rebuild` was the only way back.
 
 ## [1.7.6] - 2026-10-21
 
