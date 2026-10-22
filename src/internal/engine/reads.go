@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"kgai/internal/event"
 	"kgai/internal/graph"
@@ -554,7 +555,7 @@ func (e *Engine) attachWhy(g *graph.Graph, items []ContextItem) error {
 		}
 		byEl[eid] = append(byEl[eid], ContextWhy{
 			Title:     asStr(r["title"]),
-			Rationale: oneLine(asStr(r["rationale"])),
+			Rationale: clipLine(asStr(r["rationale"]), contextRationaleMax),
 			When:      fmtTime(r["recorded"]),
 			IsHead:    true,
 		})
@@ -1048,12 +1049,27 @@ func redactURL(u string) string {
 	return u
 }
 
-func oneLine(s string) string {
+func oneLine(s string) string { return clipLine(s, 160) }
+
+// contextRationaleMax bounds a head decision's rationale in `kg context`. The rationale
+// carries the rule itself ("retry 5xx plus exactly 429 and 408, at most 4 attempts"), and
+// agent-recorded rationales run a few hundred characters: the 160-character list cut
+// dropped exactly those details from 73-98% of real decisions. The cap only guards
+// against pathological multi-page rationales; `kg history` stays the full record.
+const contextRationaleMax = 1000
+
+// clipLine flattens s to one line and cuts it to at most max bytes, ending with "..."
+// when cut — never inside a multi-byte character.
+func clipLine(s string, max int) string {
 	s = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\r", " "))
-	if len(s) > 160 {
-		return s[:157] + "..."
+	if len(s) <= max {
+		return s
 	}
-	return s
+	cut := max - 3
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
 func fmtTime(v any) string {

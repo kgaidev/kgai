@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"kgai/internal/store"
 )
@@ -166,6 +167,71 @@ func TestContextAboutLongTaskKeepsEveryNamedElement(t *testing.T) {
 	}
 	if len(none.Items) != 0 {
 		t.Fatalf("words the store never used must match nothing, got %+v", none.Items)
+	}
+}
+
+// The rationale carries the rule itself, and agent-recorded rationales run a few hundred
+// characters. Context used to cut every one to 160, so the detail an agent must respect
+// ("exactly 429 and 408, at most 4 attempts") never reached it. A whole rationale must
+// come through; only a pathological one is capped.
+func TestContextShowsTheWholeRationale(t *testing.T) {
+	s, err := store.Init(t.TempDir()+"/store", "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(s)
+
+	rule := "During an incident the client retried every failed request, including 401s, which " +
+		"locked accounts. Policy: retry any 5xx plus exactly 429 (upstream rate-limits in bursts) " +
+		"and 408 (upstream edge times out requests); every other 4xx is permanent. At most 4 attempts."
+	huge := strings.Repeat("Background paragraph nobody needs in context. ", 100)
+	if _, err := e.Ingest(IngestInput{Decisions: []DecisionInput{{
+		Title:     "HTTP client retries only transient failures",
+		Rationale: rule,
+		Mutations: []MutationInput{{Op: "upsert_element", Kind: "component", Name: "HTTP Client"}},
+	}, {
+		Title:     "Release notes are generated from the changelog",
+		Rationale: huge,
+		Mutations: []MutationInput{{Op: "upsert_element", Kind: "feature", Name: "Release Notes"}},
+	}}}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := e.Context(ContextQuery{About: "HTTP Client", Max: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) == 0 || len(res.Items[0].Why) == 0 {
+		t.Fatalf("expected the HTTP Client decision, got %+v", res.Items)
+	}
+	if got := res.Items[0].Why[0].Rationale; got != rule {
+		t.Fatalf("context must carry the whole rationale\n got: %q\nwant: %q", got, rule)
+	}
+
+	res, err = e.Context(ContextQuery{About: "Release Notes", Max: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) == 0 || len(res.Items[0].Why) == 0 {
+		t.Fatalf("expected the Release Notes decision, got %+v", res.Items)
+	}
+	if got := res.Items[0].Why[0].Rationale; len(got) > contextRationaleMax || !strings.HasSuffix(got, "...") {
+		t.Fatalf("a pathological rationale must be capped at %d with \"...\", got %d bytes", contextRationaleMax, len(got))
+	}
+}
+
+// Rationales are often not ASCII (Czech, German, emoji). A byte cut in the middle of a
+// character produced invalid UTF-8, which JSON then shows as a replacement character.
+func TestClipLineNeverSplitsACharacter(t *testing.T) {
+	s := strings.Repeat("a", 155) + "žluťoučký kůň úpěl ďábelské ódy"
+	for max := 150; max < 175; max++ {
+		got := clipLine(s, max)
+		if !utf8.ValidString(got) {
+			t.Fatalf("clipLine(_, %d) split a character: %q", max, got)
+		}
+		if len(got) > max {
+			t.Fatalf("clipLine(_, %d) returned %d bytes", max, len(got))
+		}
 	}
 }
 
