@@ -174,6 +174,9 @@ func prettyContext(res engine.ContextResult) {
 			}
 			fmt.Printf("    %s%s %s %s%s\n", cDim, arrow, l.Kind, l.Neighbor, cReset)
 		}
+		if it.LinksOmitted > 0 {
+			fmt.Printf("    %s… %d more link(s) — %s%s\n", cDim, it.LinksOmitted, it.LinksMore, cReset)
+		}
 		for _, w := range it.Why {
 			if w.IsHead {
 				fmt.Printf("    %s●%s %s%s%s — %s\n", cGreen, cReset, cBold, w.Title, cReset, w.Rationale)

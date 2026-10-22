@@ -4,6 +4,28 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Changed
+- **`kg context` answers are about half the tokens on a busy graph.** The answer is
+  read by the agent on every task, so it now carries content, not bookkeeping: one
+  line of JSON instead of indented JSON (also `kg search`), links grouped per direction
+  and kind (`"out:PART_OF": ["Billing"]`), the day a decision was recorded instead of
+  a full timestamp, and no ranking score or always-true `is_head`. Links are capped at
+  10 per element, links to other elements of the same answer first; a capped item
+  says how many it left out (`links_omitted`) and gives the command for all of them
+  (`links_more`). On real stores the answer shrank by 15-44%.
+- **`kg context --element "kind:name"`** returns one element with every link.
+
+### Fixed
+- **`kg context` carries the whole rationale of a head decision** (up to 1,000
+  characters). The rationale is where the rule lives ("retry 5xx plus exactly 429 and
+  408, at most 4 attempts"); the old 160-character cut dropped those details from
+  73-98% of decisions on real stores. `kg search` keeps its short list line.
+- **`kg context --about` keeps every element a long task names.** Words no element or
+  decision ever used no longer dilute a real hit below the relevance threshold.
+- A cut rationale no longer splits a multi-byte character (invalid UTF-8 in JSON).
+
 ## [1.7.6] - 2026-10-21
 
 ### Security

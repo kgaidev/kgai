@@ -342,27 +342,42 @@ func sortSameName(refs []SameNameRef) {
 // ---- context ---------------------------------------------------------------
 
 type ContextLink struct {
-	Dir      string `json:"dir"` // "out" | "in"
-	Kind     string `json:"kind"`
-	Neighbor string `json:"neighbor"`
+	Dir      string // "out" | "in"
+	Kind     string
+	Neighbor string
 }
 
+// ContextItem is one element of a context answer. The JSON is what an agent reads on
+// every recall, so it carries content, not bookkeeping: links are grouped per
+// direction and kind ("out:PART_OF": [...]), capped per element with the command that
+// returns all of them; the ranking score stays internal (the order already says it).
 type ContextItem struct {
-	ElementID string            `json:"element_id"`
-	Name      string            `json:"name"`
-	Kind      string            `json:"kind"`
-	Props     map[string]string `json:"props,omitempty"`
-	Links     []ContextLink     `json:"links,omitempty"`
-	Why       []ContextWhy      `json:"why,omitempty"` // decisions shaping this element, newest first
-	Score     float64           `json:"score"`
+	ElementID string              `json:"element_id"` // kgai-cloud keys its author enrichment on it
+	Name      string              `json:"name"`
+	Kind      string              `json:"kind"`
+	Props     map[string]string   `json:"props,omitempty"`
+	Links     []ContextLink       `json:"-"` // the links shown, in LinkGroups' order
+	LinkGroup map[string][]string `json:"links,omitempty"`
+	// LinksOmitted counts the links left out by the per-element cap; LinksMore is the
+	// command that returns the element with every one of them.
+	LinksOmitted int          `json:"links_omitted,omitempty"`
+	LinksMore    string       `json:"links_more,omitempty"`
+	Why          []ContextWhy `json:"why,omitempty"` // decisions shaping this element, newest first
+	Score        float64      `json:"-"`
 }
 
 type ContextWhy struct {
 	Title     string `json:"title"`
 	Rationale string `json:"rationale,omitempty"`
-	When      string `json:"when"`
-	IsHead    bool   `json:"is_head"`
+	When      string `json:"when"` // the day it was recorded
+	IsHead    bool   `json:"-"`    // always true here: context serves head decisions only
 }
+
+// contextLinkMax caps the links shown per element. A hub element (a person, a shared
+// service) can carry hundreds; listing them all buried the rest of the answer — 34% of
+// a typical answer on a real store — while saying nothing about the work at hand.
+// Links to other elements in the same answer go first, the rest follow in graph order.
+const contextLinkMax = 10
 
 type ContextResult struct {
 	Ok      bool          `json:"ok"`
@@ -377,6 +392,9 @@ type ContextQuery struct {
 	Paths []string
 	About string
 	Max   int
+	// Element returns that one element ("kind:name" or a bare name) with every link —
+	// what an item's links_more points to when the per-element cap left links out.
+	Element string
 }
 
 // Context returns the relevant slice of the element graph for the work at hand: each
@@ -464,10 +482,29 @@ func (e *Engine) Context(q ContextQuery) (ContextResult, error) {
 		}
 	}
 
+	// --element: one element, every link (what links_more points to). Resolved like
+	// `kg history`: an id, "kind:name", or a bare name carried by exactly one element.
+	target := ""
+	if q.Element != "" {
+		var cands []SameNameRef
+		target, cands = e.historyTarget(g, q.Element, e.allElements(g))
+		if len(cands) > 0 {
+			refs := make([]string, len(cands))
+			for i, c := range cands {
+				refs[i] = c.Ref
+			}
+			return ContextResult{Ok: true, Items: []ContextItem{},
+				Note: "several elements carry that name — re-run with one of: " + strings.Join(refs, ", ")}, nil
+		}
+	}
+
 	filtered := len(q.Paths) > 0 || q.About != ""
 	var items []ContextItem
 	for _, r := range elems {
 		eid := asStr(r["id"])
+		if target != "" && eid != target {
+			continue
+		}
 		props := parseProps(asStr(r["props"]))
 		it := ContextItem{ElementID: eid, Name: asStr(r["name"]), Kind: asStr(r["kind"]), Props: props}
 		it.Links = append(outL[eid], inL[eid]...)
@@ -490,7 +527,7 @@ func (e *Engine) Context(q ContextQuery) (ContextResult, error) {
 			score += 5 * decBoost[eid] * aboutNorm
 		}
 		score += 0.001 * float64(maxLam[eid]) // recency tiebreak
-		if filtered && score < 1 {
+		if target == "" && filtered && score < 1 {
 			continue
 		}
 		it.Score = score
@@ -513,11 +550,18 @@ func (e *Engine) Context(q ContextQuery) (ContextResult, error) {
 	if err := e.attachWhy(g, res.Items); err != nil {
 		return res, err
 	}
+	capped := shapeLinks(res.Items, target == "")
 	if res.Omitted > 0 {
 		res.Note = fmt.Sprintf("%d more element(s) omitted — narrow with --paths/--about or raise --max", res.Omitted)
 	}
-	if !filtered {
+	if !filtered && target == "" {
 		res.Note = strings.TrimSpace("no filters — showing whole element graph. " + res.Note)
+	}
+	if target != "" && len(res.Items) == 0 {
+		res.Note = fmt.Sprintf("no element %q — kg search finds elements by words", q.Element)
+	}
+	if capped > 0 {
+		res.Note = strings.TrimSpace(res.Note + fmt.Sprintf(" Links capped at %d per element (%d element(s)) — run an item's links_more for all of its links.", contextLinkMax, capped))
 	}
 	res.Ok = true
 	return res, nil
@@ -556,7 +600,7 @@ func (e *Engine) attachWhy(g *graph.Graph, items []ContextItem) error {
 		byEl[eid] = append(byEl[eid], ContextWhy{
 			Title:     asStr(r["title"]),
 			Rationale: clipLine(asStr(r["rationale"]), contextRationaleMax),
-			When:      fmtTime(r["recorded"]),
+			When:      day(fmtTime(r["recorded"])),
 			IsHead:    true,
 		})
 	}
@@ -564,6 +608,38 @@ func (e *Engine) attachWhy(g *graph.Graph, items []ContextItem) error {
 		items[i].Why = byEl[items[i].ElementID]
 	}
 	return nil
+}
+
+// shapeLinks groups each item's links for the JSON answer and, when cap is set, keeps
+// at most contextLinkMax of them — links to other elements of the same answer first —
+// recording how many were left out and the command that returns them all. It returns
+// the number of items that were capped.
+func shapeLinks(items []ContextItem, cap bool) int {
+	inAnswer := map[string]bool{}
+	for _, it := range items {
+		inAnswer[it.Name] = true
+	}
+	capped := 0
+	for i := range items {
+		it := &items[i]
+		links := it.Links
+		if cap && len(links) > contextLinkMax {
+			sort.SliceStable(links, func(a, b int) bool { return inAnswer[links[a].Neighbor] && !inAnswer[links[b].Neighbor] })
+			it.LinksOmitted = len(links) - contextLinkMax
+			it.LinksMore = fmt.Sprintf("kg context --element %q", it.Kind+":"+it.Name)
+			links = links[:contextLinkMax]
+			capped++
+		}
+		it.Links = links
+		if len(links) > 0 {
+			it.LinkGroup = map[string][]string{}
+			for _, l := range links {
+				k := l.Dir + ":" + l.Kind
+				it.LinkGroup[k] = append(it.LinkGroup[k], l.Neighbor)
+			}
+		}
+	}
+	return capped
 }
 
 // ---- as-of (time travel) ---------------------------------------------------
@@ -1070,6 +1146,14 @@ func clipLine(s string, max int) string {
 		cut--
 	}
 	return s[:cut] + "..."
+}
+
+// day keeps the date of an RFC 3339 timestamp: what an agent needs from "when".
+func day(ts string) string {
+	if len(ts) >= 10 {
+		return ts[:10]
+	}
+	return ts
 }
 
 func fmtTime(v any) string {

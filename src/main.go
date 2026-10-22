@@ -321,7 +321,7 @@ func cmdSearch(args []string) error {
 		prettySearch(hits)
 		return nil
 	}
-	emit(map[string]any{"ok": true, "hits": hits})
+	emitCompact(map[string]any{"ok": true, "hits": hits})
 	return nil
 }
 
@@ -330,6 +330,7 @@ func cmdContext(args []string) error {
 	paths := fs.String("paths", "", "comma-separated code paths touched by current work")
 	about := fs.String("about", "", "element name/kind of interest")
 	max := fs.Int("max", 15, "max items")
+	element := fs.String("element", "", "one element (kind:name) with all of its links")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -340,7 +341,7 @@ func cmdContext(args []string) error {
 	if e == nil {
 		return noStore(map[string]any{"items": []any{}, "shown": 0, "omitted": 0, "total": 0})
 	}
-	res, err := e.Context(engine.ContextQuery{Paths: splitCSV(*paths), About: *about, Max: *max})
+	res, err := e.Context(engine.ContextQuery{Paths: splitCSV(*paths), About: *about, Max: *max, Element: *element})
 	if err != nil {
 		return err
 	}
@@ -348,7 +349,7 @@ func cmdContext(args []string) error {
 		prettyContext(res)
 		return nil
 	}
-	emitVal(res)
+	emitCompact(res)
 	return nil
 }
 
@@ -1172,6 +1173,18 @@ func emit(v map[string]any) {
 	emitVal(v)
 }
 
+// emitCompact prints one line of JSON. Recall answers (context, search) are read by an
+// agent on every task, and indentation alone was 10-19% of their tokens.
+func emitCompact(v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "marshal error: %v\n", err)
+		return
+	}
+	os.Stdout.Write(b)
+	os.Stdout.Write([]byte("\n"))
+}
+
 func emitVal(v any) {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -1231,6 +1244,7 @@ WRITE
 
 READ
   context [--paths a,b] [--about X] [--max N]         relevant elements + the decisions that shaped them
+  context --element "<kind:name>"                     one element with every link (context caps links per element)
   history "<element>"                                 full decision chain that shaped an element
   as-of <timestamp>                                   element-graph structure effective at a past time
   search "<text>" [--limit N]                         free-text search over elements & decisions (relevance-ranked, typo-tolerant)

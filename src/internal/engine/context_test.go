@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -232,6 +234,119 @@ func TestClipLineNeverSplitsACharacter(t *testing.T) {
 		if len(got) > max {
 			t.Fatalf("clipLine(_, %d) returned %d bytes", max, len(got))
 		}
+	}
+}
+
+// A hub element (a person, a shared service) can carry hundreds of links; listing all
+// of them buried the rest of the answer. Context shows at most contextLinkMax per
+// element — links to other elements of the same answer first — and says, on the item
+// itself, how many it left out and which command returns every one of them.
+func TestContextCapsLinksAndPointsToTheRest(t *testing.T) {
+	s, err := store.Init(t.TempDir()+"/store", "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(s)
+
+	muts := []MutationInput{{Op: "upsert_element", Kind: "service", Name: "Hub"}}
+	for i := 1; i <= 25; i++ {
+		n := fmt.Sprintf("Spoke%02d", i)
+		muts = append(muts, MutationInput{Op: "upsert_element", Kind: "feature", Name: n},
+			MutationInput{Op: "add_link", From: "feature:" + n, To: "service:Hub", Link: "DEPENDS_ON"})
+	}
+	if _, err := e.Ingest(IngestInput{Decision: &DecisionInput{Title: "Every feature depends on the Hub",
+		Rationale: "One shared service.", Mutations: muts}}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := e.Context(ContextQuery{About: "Hub Spoke25", Max: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hub *ContextItem
+	for i := range res.Items {
+		if res.Items[i].Name == "Hub" {
+			hub = &res.Items[i]
+		}
+	}
+	if hub == nil {
+		t.Fatalf("expected the Hub in context, got %+v", res.Items)
+	}
+	shown := hub.LinkGroup["in:DEPENDS_ON"]
+	if len(shown) != contextLinkMax || hub.LinksOmitted != 25-contextLinkMax {
+		t.Fatalf("hub must show %d links and count the other %d, got %d shown, %d omitted",
+			contextLinkMax, 25-contextLinkMax, len(shown), hub.LinksOmitted)
+	}
+	if hub.LinksMore != `kg context --element "service:Hub"` {
+		t.Fatalf("a capped item must name the command for all its links, got %q", hub.LinksMore)
+	}
+	if !strings.Contains(res.Note, "links_more") {
+		t.Fatalf("the answer must say links were capped and how to get them, note: %q", res.Note)
+	}
+	inShown := false
+	for _, n := range shown {
+		inShown = inShown || n == "Spoke25"
+	}
+	if !inShown {
+		t.Fatalf("a link to another element of the same answer must survive the cap, shown: %v", shown)
+	}
+
+	all, err := e.Context(ContextQuery{Element: "service:Hub"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Items) != 1 || len(all.Items[0].LinkGroup["in:DEPENDS_ON"]) != 25 || all.Items[0].LinksOmitted != 0 {
+		t.Fatalf("--element must return that one element with every link, got %+v", all.Items)
+	}
+}
+
+// The context JSON is read by an agent on every task: content, not bookkeeping.
+// No ranking score, no always-true is_head, the day instead of a full timestamp, and
+// links grouped per direction and kind. element_id stays — kgai-cloud keys on it.
+func TestContextJSONCarriesContentNotBookkeeping(t *testing.T) {
+	s, err := store.Init(t.TempDir()+"/store", "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(s)
+	if _, err := e.Ingest(IngestInput{Decision: &DecisionInput{Title: "Invoice is part of Billing",
+		Mutations: []MutationInput{
+			{Op: "upsert_element", Kind: "feature", Name: "Invoice"},
+			{Op: "upsert_element", Kind: "feature", Name: "Billing"},
+			{Op: "add_link", From: "feature:Invoice", To: "feature:Billing", Link: "PART_OF"},
+		}}}, false); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.Context(ContextQuery{About: "Invoice", Max: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(res)
+	var doc struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil || len(doc.Items) == 0 {
+		t.Fatalf("bad context JSON: %s", b)
+	}
+	it := doc.Items[0]
+	for _, k := range []string{"score"} {
+		if _, ok := it[k]; ok {
+			t.Fatalf("item must not carry %q: %s", k, b)
+		}
+	}
+	if _, ok := it["element_id"]; !ok {
+		t.Fatalf("item must keep element_id (kgai-cloud keys on it): %s", b)
+	}
+	links, ok := it["links"].(map[string]any)
+	if !ok || links["out:PART_OF"] == nil {
+		t.Fatalf("links must be grouped per direction and kind: %s", b)
+	}
+	why := it["why"].([]any)[0].(map[string]any)
+	if _, ok := why["is_head"]; ok {
+		t.Fatalf("why must not carry is_head: %s", b)
+	}
+	if w, _ := why["when"].(string); len(w) != 10 {
+		t.Fatalf("why.when must be the day (YYYY-MM-DD), got %q", w)
 	}
 }
 

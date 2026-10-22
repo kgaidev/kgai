@@ -56,7 +56,10 @@ kg conflicts --about "Invoice"        # elements with two competing head decisio
 `kg context` returns, per matched element: its current **links** and its **head
 decision(s)** — the ones currently governing it, with rationale (superseded ones live
 in `kg history`). If a decision constrains what you're about to do, respect it — or
-supersede it with a new decision (§2).
+supersede it with a new decision (§2). Links are capped at 10 per element; an item
+that has more says how many (`links_omitted`) and gives the command that returns all
+of them (`links_more`, i.e. `kg context --element "kind:name"`) — run it when the
+missing links matter to the task.
 
 `kg history` takes `kind:name`, a bare name, or an element id. A bare name carried by
 several elements returns `candidates` instead of guessing — re-query with one of them.
