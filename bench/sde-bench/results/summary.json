@@ -1,0 +1,38 @@
+{
+ "benchmark": "SDE-bench (vectorize-io/sde-bench afcce15) in AMB 16fcebb",
+ "agent": "claude-code",
+ "model": "claude-sonnet-5",
+ "kgai_engine": "2216ac6",
+ "arm": "provided (kg context --about <bug report> --max 10)",
+ "runs": [
+  {
+   "run": 1,
+   "tasks": 61,
+   "solved": 61,
+   "first_try": 47,
+   "mean_interventions": 0.25,
+   "cost_usd": 12.51
+  },
+  {
+   "run": 2,
+   "tasks": 61,
+   "solved": 61,
+   "first_try": 48,
+   "mean_interventions": 0.25,
+   "cost_usd": 16.56
+  },
+  {
+   "run": 3,
+   "tasks": 61,
+   "solved": 60,
+   "first_try": 51,
+   "mean_interventions": 0.23,
+   "cost_usd": 17.38
+  }
+ ],
+ "capture": {
+  "documents": 306,
+  "cost_usd": 33.13,
+  "note": "one-time, shared by all three runs"
+ }
+}

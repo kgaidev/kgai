@@ -1,0 +1,75 @@
+diff --git a/sdebench/harness/run.py b/sdebench/harness/run.py
+index 1f97fb9..33463b0 100644
+--- a/sdebench/harness/run.py
++++ b/sdebench/harness/run.py
+@@ -22,6 +22,15 @@ REPO_ROOT = SDEBENCH.parent
+ IMAGE = "sdebench-base"
+ 
+ 
++def _reclaim(path):
++    """LOCAL PATCH (Linux Docker): containers run as root and leave root-owned files (pyc,
++    .pytest_cache) in bind mounts; hand them back to the host user before deleting."""
++    path = Path(path)
++    if path.exists():
++        subprocess.run(["docker", "run", "--rm", "-v", f"{path}:/x", IMAGE, "chown", "-R",
++                        f"{os.getuid()}:{os.getgid()}", "/x"], capture_output=True)
++
++
+ def _codebase_dir(task):
+     """Dir holding build.py for this task's shared codebase."""
+     return SDEBENCH / "datasets" / (task.get("codebase") or task["repo"])
+@@ -103,10 +112,12 @@ def neutral_home() -> str:
+ 
+ def build_repo(task: dict, dest: Path, history: str):
+     if dest.exists():
++        _reclaim(dest)
+         shutil.rmtree(dest)
+     ds = _codebase_dir(task)
+     sh("python", str(ds / task["build"]), str(dest))
+     if history == "squashed":
++        _reclaim(dest / ".git")
+         shutil.rmtree(dest / ".git")
+         sh("git", "init", "-q", cwd=dest)
+         sh("git", "add", "-A", cwd=dest)
+@@ -164,6 +175,7 @@ def ingest_history(task: dict, bank: str):
+     so a squashed-repo agent can RECALL the history it can't `git blame` for."""
+     src = Path("/tmp/sdebench/ingest") / task["repo"]
+     if src.exists():
++        _reclaim(src)
+         shutil.rmtree(src)
+     sh("python", str(_codebase_dir(task) / task["build"]), str(src))
+     subprocess.run(["hindsight", "bank", "delete", bank, "--yes"], env=cli_env(),
+@@ -231,6 +243,7 @@ def capture_git_history(task: dict) -> list:
+     the full/hindsight arms have access to and the squashed arm does not. Newest first."""
+     src = Path("/tmp/sdebench/hist") / task["repo"]
+     if src.exists():
++        _reclaim(src)
+         shutil.rmtree(src)
+     sh("python", str(_codebase_dir(task) / task["build"]), str(src))
+     out = []
+@@ -250,6 +263,7 @@ def gen_index_doc(task: dict) -> str:
+     derivable memory: good commit messages -> a usable index for H/X/K alike."""
+     src = Path("/tmp/sdebench/idxsrc") / task["repo"]
+     if src.exists():
++        _reclaim(src)
+         shutil.rmtree(src)
+     sh("python", str(_codebase_dir(task) / task["build"]), str(src))
+     import re as _re
+@@ -940,6 +954,7 @@ def main():
+ 
+     work = Path("/tmp/sdebench/run") / f"{task['task_id']}_{args.history}_{args.run_id}"
+     if work.exists():
++        _reclaim(work)
+         shutil.rmtree(work)
+     work.mkdir(parents=True)
+     repo = work / "repo"
+@@ -1122,7 +1137,9 @@ def main():
+         {**result, "bug_report": task["bug_report"], "final_patch": patch, "git_history": git_history, "trace": trace}, indent=2))
+     # each workdir holds a full host-repo clone (+ a second pristine copy for grading) — sweeps ran
+     # the disk to 100% and took the docker daemon down. Keep result/trace, drop the repo copies.
++    _reclaim(repo)
+     shutil.rmtree(repo, ignore_errors=True)
++    _reclaim(work / "grade")
+     shutil.rmtree(work / "grade", ignore_errors=True)
+     print(json.dumps(result, indent=2))
+     tk = result["tokens"]

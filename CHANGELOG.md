@@ -6,6 +6,13 @@ git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+### Added
+- **`bench/sde-bench/`: kgai on SDE-bench.** The coding-agent benchmark of the Agent
+  Memory Benchmark: 61 bug fixes whose obvious fix fails a hidden test that encodes an
+  earlier team decision. With kgai, Claude Code (Sonnet 5) fixed 47, 48 and 51 of 61 on
+  the first try over three runs; the harness authors' published runs without memory fix
+  21-25. Method, scripts and the raw results are in the directory.
+
 ### Changed
 - **`kg context` answers are about half the tokens on a busy graph.** The answer is
   read by the agent on every task, so it now carries content, not bookkeeping: one
