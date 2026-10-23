@@ -4,6 +4,15 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [1.8.1] - 2026-10-23
+
+### Security
+- **Bump markdown-it and follow-redirects in the VS Code extension.** markdown-it
+  14.3.3 (GHSA-gfr2-rv44-r23c) and follow-redirects 1.16.1 in
+  `editors/vscode/package-lock.json`. Both are build tools only (vsce and ovsx, which
+  package and publish the extension); neither ships in the extension or in `kg`, so
+  nothing changes for users.
+
 ## [1.8.0] - 2026-10-22
 
 ### Added
