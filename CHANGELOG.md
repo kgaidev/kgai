@@ -4,6 +4,15 @@ All notable changes to the kgai plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions match the
 git tags (`vX.Y.Z`) and `.claude-plugin/plugin.json`.
 
+## [1.8.2] - 2026-10-30
+
+### Security
+- **Bump @azure/msal-node and undici in the VS Code extension.** @azure/msal-node
+  7.1.4 (via @azure/identity 4.14.1) and undici 7.30.1 in
+  `editors/vscode/package-lock.json`, plus qs, fast-uri and serialize-javascript.
+  All are build tools only (vsce, which packages and publishes the extension); none
+  ships in the extension or in `kg`, so nothing changes for users.
+
 ## [1.8.1] - 2026-10-23
 
 ### Security
